@@ -6,6 +6,18 @@
 # Python
 __pycache__/
 *.pyc
+venv/
+*.egg-info/
+
+# Environment and secrets
+.env
+.env.local
+
+# Database files
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 
 # Garmin FIT outputs
 *.fit
