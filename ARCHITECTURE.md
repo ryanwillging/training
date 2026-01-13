@@ -217,16 +217,28 @@ An AI-powered training coach that performs daily reviews of activity data, compa
 
 ## Data Flow
 
-### Morning (Workout Sync)
+### Evening (Daily Review) - Human-in-the-Loop Workflow
 ```
-Training Plan DB → Generate Workouts → Export to Garmin/Hevy
+1. Import Data:
+   Garmin/Hevy APIs → Pull Today's Activities → Store in DB
+
+2. Analysis:
+   Compare to Plan → Calculate Adherence → Track Goal Progress
+   → Generate Insights → Propose Plan Adjustments (if needed)
+
+3. Human Review (CRITICAL):
+   Present Review Summary → USER REVIEWS → USER APPROVES/REJECTS Changes
+
+4. If Approved:
+   Update Plan in DB → Generate Workouts → Export to Garmin/Hevy IMMEDIATELY
+   → Send Notification (CLI output initially, push notification future)
+
+5. Store Review:
+   Save review, insights, adjustments, and approval status to daily_reviews table
 ```
 
-### Evening (Daily Review)
-```
-Garmin/Hevy APIs → Import Activities → Compare to Plan → Analyze Progress
-  → Generate Insights → Decide Adjustments → Update Plan → Store Review
-```
+**Key Change**: Workouts are exported **immediately after approval** (not the next morning).
+This ensures approved plan changes are available on apps right away for upcoming workouts.
 
 ## Technology Stack
 

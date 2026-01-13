@@ -169,18 +169,30 @@ CREATE TABLE daily_reviews (
     insights TEXT,  -- Generated insights (markdown or plain text)
     recommendations TEXT,  -- Suggested actions
 
-    -- Plan adjustments
-    adjustments_made TEXT,  -- JSON array of adjustments applied
+    -- Plan adjustments (proposed)
+    proposed_adjustments TEXT,  -- JSON array of proposed adjustments
     next_week_focus TEXT,   -- Text summary
+
+    -- Human approval tracking (CRITICAL)
+    approval_status TEXT DEFAULT 'pending',  -- 'pending', 'approved', 'rejected', 'no_changes_needed'
+    approved_at TIMESTAMP,
+    approval_notes TEXT,  -- User's comments on approval/rejection
+
+    -- Export tracking
+    adjustments_applied BOOLEAN DEFAULT FALSE,  -- Were adjustments applied to plan?
+    workouts_exported BOOLEAN DEFAULT FALSE,  -- Were workouts exported to apps?
+    exported_at TIMESTAMP,
 
     -- Metadata
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     FOREIGN KEY (athlete_id) REFERENCES athletes(id),
     UNIQUE(athlete_id, review_date)  -- One review per day per athlete
 );
 
 CREATE INDEX idx_daily_reviews_date ON daily_reviews(athlete_id, review_date);
+CREATE INDEX idx_daily_reviews_approval ON daily_reviews(approval_status);
 ```
 
 ### Table: plan_adjustments
