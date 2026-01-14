@@ -42,15 +42,10 @@ training/
 **Target**: Fully autonomous operation on Vercel (no local dependencies)
 
 ### Completed
-- Vercel deployment configured
+- Vercel deployment configured and operational
+- Neon PostgreSQL database connected (119+ activities synced)
 - Cron job for daily sync (5:00 UTC)
-- Environment variables set (Garmin, Hevy, CRON_SECRET)
-
-### Remaining
-- [ ] **PostgreSQL database** - Required for data persistence on Vercel
-  - Create database in Vercel Postgres or Neon
-  - Add `DATABASE_URL` environment variable
-  - Redeploy: `vercel deploy --prod`
+- Environment variables set (DATABASE_URL, Garmin, Hevy, CRON_SECRET)
 
 ## Data Models
 Key SQLAlchemy models in `database/models.py`:
@@ -123,12 +118,12 @@ pytest tests/test_reports.py
 ```
 
 ## Environment Variables (Vercel)
-Required:
-- `DATABASE_URL` - PostgreSQL connection string (not yet configured)
-- `GARMIN_EMAIL` - Garmin Connect email (configured)
-- `GARMIN_PASSWORD` - Garmin Connect password (configured)
-- `HEVY_API_KEY` - Hevy API key (configured)
-- `CRON_SECRET` - Secret for cron authorization (configured)
+All required variables are configured:
+- `DATABASE_URL` - Neon PostgreSQL connection string
+- `GARMIN_EMAIL` - Garmin Connect email
+- `GARMIN_PASSWORD` - Garmin Connect password
+- `HEVY_API_KEY` - Hevy API key
+- `CRON_SECRET` - Secret for cron authorization
 
 ## Troubleshooting
 
