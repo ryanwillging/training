@@ -1,6 +1,12 @@
 """
 Cron job endpoint for daily data synchronization.
 Called by Vercel Cron at midnight daily.
+
+Syncs:
+- Garmin activities
+- Garmin wellness data (sleep, stress, HRV, body battery, etc.)
+- Hevy workouts
+- Generates goal progress analysis
 """
 
 import os
@@ -10,7 +16,9 @@ from typing import Optional
 
 from database.base import SessionLocal
 from integrations.garmin.activity_importer import GarminActivityImporter
+from integrations.garmin.wellness_importer import GarminWellnessImporter
 from integrations.hevy.activity_importer import HevyActivityImporter
+from analyst.goal_analyzer import GoalAnalyzer, WorkoutRecommendationEngine
 
 router = APIRouter(prefix="/cron", tags=["cron"])
 
@@ -66,8 +74,10 @@ async def cron_sync(
         "date": str(date.today()),
         "athlete_id": athlete_id,
         "days_synced": days,
-        "garmin": None,
+        "garmin_activities": None,
+        "garmin_wellness": None,
         "hevy": None,
+        "goal_analysis": None,
         "errors": []
     }
 
@@ -76,16 +86,32 @@ async def cron_sync(
         try:
             garmin = GarminActivityImporter(db, athlete_id)
             imported, skipped, errors = garmin.import_recent_activities(days)
-            results["garmin"] = {
+            results["garmin_activities"] = {
                 "imported": imported,
                 "skipped": skipped,
                 "errors": errors
             }
             if errors:
-                results["errors"].extend([f"Garmin: {e}" for e in errors])
+                results["errors"].extend([f"Garmin Activities: {e}" for e in errors])
         except Exception as e:
-            results["garmin"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
-            results["errors"].append(f"Garmin sync failed: {str(e)}")
+            results["garmin_activities"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
+            results["errors"].append(f"Garmin activities sync failed: {str(e)}")
+
+        # Sync Garmin wellness data (sleep, stress, HRV, body battery, etc.)
+        try:
+            wellness = GarminWellnessImporter(db, athlete_id)
+            imported, updated, errors = wellness.import_recent_wellness(days)
+            wellness.update_athlete_metrics()
+            results["garmin_wellness"] = {
+                "imported": imported,
+                "updated": updated,
+                "errors": errors
+            }
+            if errors:
+                results["errors"].extend([f"Garmin Wellness: {e}" for e in errors])
+        except Exception as e:
+            results["garmin_wellness"] = {"imported": 0, "updated": 0, "errors": [str(e)]}
+            results["errors"].append(f"Garmin wellness sync failed: {str(e)}")
 
         # Sync Hevy workouts
         try:
@@ -102,19 +128,28 @@ async def cron_sync(
             results["hevy"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
             results["errors"].append(f"Hevy sync failed: {str(e)}")
 
+        # Run goal analysis and generate recommendations
+        try:
+            analyzer = WorkoutRecommendationEngine(db, athlete_id)
+            recommendations = analyzer.generate_weekly_recommendations()
+            results["goal_analysis"] = {
+                "goals_analyzed": len(recommendations.get("goal_progress", [])),
+                "priority_focus": recommendations.get("priority_focus"),
+                "recommendations_count": len(recommendations.get("recommendations", []))
+            }
+        except Exception as e:
+            results["goal_analysis"] = {"error": str(e)}
+            results["errors"].append(f"Goal analysis failed: {str(e)}")
+
         # Calculate totals
         total_imported = (
-            (results["garmin"]["imported"] if results["garmin"] else 0) +
+            (results["garmin_activities"]["imported"] if results["garmin_activities"] else 0) +
+            (results["garmin_wellness"]["imported"] if results["garmin_wellness"] else 0) +
             (results["hevy"]["imported"] if results["hevy"] else 0)
-        )
-        total_skipped = (
-            (results["garmin"]["skipped"] if results["garmin"] else 0) +
-            (results["hevy"]["skipped"] if results["hevy"] else 0)
         )
 
         results["summary"] = {
             "total_imported": total_imported,
-            "total_skipped": total_skipped,
             "status": "completed" if not results["errors"] else "completed_with_errors"
         }
 

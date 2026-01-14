@@ -350,3 +350,207 @@ class Report(Base):
 
     def __repr__(self):
         return f"<Report(id={self.id}, type='{self.report_type}', date={self.report_date})>"
+
+
+class DailyWellness(Base):
+    """
+    Daily wellness data from Garmin (sleep, stress, HRV, body battery, etc.).
+    One record per athlete per day.
+    """
+
+    __tablename__ = "daily_wellness"
+    __table_args__ = (
+        UniqueConstraint("athlete_id", "date", name="uix_wellness_athlete_date"),
+        Index("idx_wellness_date", "athlete_id", "date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    athlete_id = Column(Integer, ForeignKey("athletes.id"), nullable=False)
+    date = Column(Date, nullable=False)
+
+    # Sleep metrics
+    sleep_score = Column(Integer)  # 0-100
+    sleep_duration_seconds = Column(Integer)
+    sleep_deep_seconds = Column(Integer)
+    sleep_light_seconds = Column(Integer)
+    sleep_rem_seconds = Column(Integer)
+    sleep_awake_seconds = Column(Integer)
+
+    # Recovery & readiness
+    body_battery_high = Column(Integer)  # Highest value of day
+    body_battery_low = Column(Integer)   # Lowest value of day
+    body_battery_charged = Column(Integer)  # Amount charged overnight
+    training_readiness_score = Column(Integer)  # 0-100
+    training_readiness_status = Column(String)  # 'OPTIMAL', 'PRIME', 'PRIMED', etc.
+
+    # Stress
+    avg_stress_level = Column(Integer)  # 0-100
+    max_stress_level = Column(Integer)
+    stress_duration_seconds = Column(Integer)  # Time in stress
+    rest_duration_seconds = Column(Integer)  # Time at rest
+
+    # Heart metrics
+    resting_heart_rate = Column(Integer)  # bpm
+    hrv_weekly_avg = Column(Integer)  # ms
+    hrv_last_night = Column(Integer)  # ms
+    hrv_status = Column(String)  # 'BALANCED', 'LOW', 'UNBALANCED', etc.
+
+    # Respiratory
+    avg_respiration_rate = Column(Float)  # breaths/min
+    avg_spo2 = Column(Float)  # percentage
+
+    # Activity summary
+    steps = Column(Integer)
+    floors_climbed = Column(Integer)
+    active_calories = Column(Integer)
+    total_calories = Column(Integer)
+
+    # Training status (from Garmin)
+    training_status = Column(String)  # 'PRODUCTIVE', 'MAINTAINING', 'RECOVERY', etc.
+    training_load = Column(Float)  # 7-day load
+    vo2_max_running = Column(Float)  # VO2 max estimate from running
+    vo2_max_cycling = Column(Float)  # VO2 max estimate from cycling
+
+    # Raw data storage for additional fields
+    raw_data_json = Column(Text)  # Full JSON response for future use
+
+    # Tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    athlete = relationship("Athlete")
+
+    def __repr__(self):
+        return f"<DailyWellness(date={self.date}, sleep_score={self.sleep_score}, readiness={self.training_readiness_score})>"
+
+
+class Goal(Base):
+    """
+    Structured goal definition with target values and tracking.
+    """
+
+    __tablename__ = "goals"
+    __table_args__ = (
+        Index("idx_goals_athlete_status", "athlete_id", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    athlete_id = Column(Integer, ForeignKey("athletes.id"), nullable=False)
+
+    # Goal definition
+    name = Column(String, nullable=False)  # "Reduce body fat to 14%"
+    category = Column(String, nullable=False)  # 'body_composition', 'cardio', 'strength', 'flexibility', 'skill'
+    metric_type = Column(String, nullable=False)  # Links to ProgressMetric metric_type
+
+    # Target values
+    target_value = Column(Float, nullable=False)
+    target_unit = Column(String)  # '%', 'ml/kg/min', 'inches', 'seconds', etc.
+    baseline_value = Column(Float)  # Starting point
+    baseline_date = Column(Date)
+
+    # Direction and bounds
+    direction = Column(String, default="decrease")  # 'increase', 'decrease', 'maintain'
+    min_acceptable = Column(Float)  # For 'maintain' goals
+    max_acceptable = Column(Float)
+
+    # Timeline
+    target_date = Column(Date)  # When to achieve by
+    status = Column(String, default="active")  # 'active', 'achieved', 'abandoned', 'paused'
+
+    # Priority and notes
+    priority = Column(Integer, default=2)  # 1=high, 2=medium, 3=low
+    notes = Column(Text)
+
+    # Tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    achieved_at = Column(DateTime)
+
+    # Relationships
+    athlete = relationship("Athlete")
+    progress_records = relationship("GoalProgress", back_populates="goal")
+
+    def __repr__(self):
+        return f"<Goal(id={self.id}, name='{self.name}', target={self.target_value}, status='{self.status}')>"
+
+
+class GoalProgress(Base):
+    """
+    Track progress toward goals over time.
+    """
+
+    __tablename__ = "goal_progress"
+    __table_args__ = (
+        Index("idx_goal_progress_date", "goal_id", "date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    goal_id = Column(Integer, ForeignKey("goals.id"), nullable=False)
+    date = Column(Date, nullable=False)
+
+    # Current state
+    current_value = Column(Float)
+    progress_percent = Column(Float)  # 0-100, how far toward goal
+
+    # Analysis
+    trend = Column(String)  # 'improving', 'stable', 'declining'
+    days_to_target = Column(Integer)  # Estimated days to reach target at current rate
+    on_track = Column(Boolean)  # Is progress on track for target_date?
+
+    # Context
+    notes = Column(Text)
+    source = Column(String)  # 'garmin', 'manual', 'calculated'
+
+    # Tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    goal = relationship("Goal", back_populates="progress_records")
+
+    def __repr__(self):
+        return f"<GoalProgress(goal_id={self.goal_id}, date={self.date}, progress={self.progress_percent}%)>"
+
+
+class WorkoutAnalysis(Base):
+    """
+    Analysis of workout patterns and recommendations.
+    Generated periodically to assess training effectiveness.
+    """
+
+    __tablename__ = "workout_analyses"
+    __table_args__ = (
+        Index("idx_workout_analysis_date", "athlete_id", "analysis_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    athlete_id = Column(Integer, ForeignKey("athletes.id"), nullable=False)
+    analysis_date = Column(Date, nullable=False)
+    period_days = Column(Integer, default=7)  # Analysis period (7, 14, 30 days)
+
+    # Volume analysis
+    total_workouts = Column(Integer)
+    total_duration_minutes = Column(Integer)
+    workouts_by_type_json = Column(Text)  # {"swim": 2, "strength": 3, ...}
+
+    # Intensity analysis
+    avg_heart_rate = Column(Integer)
+    time_in_zones_json = Column(Text)  # {"zone1": 120, "zone2": 45, ...} minutes
+
+    # Goal alignment
+    goal_alignment_json = Column(Text)  # {"goal_id": score, ...}
+    overall_alignment_score = Column(Float)  # 0-100
+
+    # Recommendations
+    recommendations_json = Column(Text)  # List of recommendation objects
+    priority_focus = Column(String)  # What to focus on next
+    suggested_adjustments = Column(Text)  # Markdown text
+
+    # Tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    athlete = relationship("Athlete")
+
+    def __repr__(self):
+        return f"<WorkoutAnalysis(date={self.analysis_date}, alignment={self.overall_alignment_score})>"

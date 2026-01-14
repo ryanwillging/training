@@ -245,3 +245,374 @@ class GarminClient:
         except Exception as e:
             print(f"✗ Error uploading activity: {e}")
             raise
+
+    # ==================== WELLNESS & RECOVERY DATA ====================
+
+    def get_sleep_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get sleep data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Sleep data including duration, stages, score
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_sleep_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching sleep data for {date_str}: {e}")
+            return {}
+
+    def get_stress_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get stress data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Stress level data throughout the day
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_stress_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching stress data for {date_str}: {e}")
+            return {}
+
+    def get_body_battery(self, date_str: str) -> List[Dict[str, Any]]:
+        """
+        Get body battery data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Body battery readings throughout the day
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_body_battery(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching body battery for {date_str}: {e}")
+            return []
+
+    def get_resting_heart_rate(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get resting heart rate for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Resting heart rate data
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_rhr_day(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching resting HR for {date_str}: {e}")
+            return {}
+
+    def get_hrv_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get heart rate variability data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            HRV data including status and readings
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_hrv_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching HRV data for {date_str}: {e}")
+            return {}
+
+    def get_respiration_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get respiration/breathing rate data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Respiration rate data
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_respiration_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching respiration data for {date_str}: {e}")
+            return {}
+
+    def get_spo2_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get blood oxygen saturation data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            SpO2 readings
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_spo2_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching SpO2 data for {date_str}: {e}")
+            return {}
+
+    # ==================== TRAINING & PERFORMANCE METRICS ====================
+
+    def get_training_readiness(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get training readiness score for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Training readiness data including score and factors
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_training_readiness(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching training readiness for {date_str}: {e}")
+            return {}
+
+    def get_training_status(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get training status for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Training status data (productive, maintaining, detraining, etc.)
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_training_status(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching training status for {date_str}: {e}")
+            return {}
+
+    def get_max_metrics(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get max metrics (VO2 max, etc.) for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Max metrics data including VO2 max estimates
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_max_metrics(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching max metrics for {date_str}: {e}")
+            return {}
+
+    def get_race_predictions(self) -> Dict[str, Any]:
+        """
+        Get race time predictions based on fitness data.
+
+        Returns:
+            Predicted race times for various distances
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_race_predictions()
+        except Exception as e:
+            print(f"✗ Error fetching race predictions: {e}")
+            return {}
+
+    def get_personal_records(self) -> List[Dict[str, Any]]:
+        """
+        Get personal records across all activities.
+
+        Returns:
+            List of personal records
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_personal_record()
+        except Exception as e:
+            print(f"✗ Error fetching personal records: {e}")
+            return []
+
+    def get_endurance_score(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get endurance score for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Endurance score data
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_endurance_score(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching endurance score for {date_str}: {e}")
+            return {}
+
+    def get_hill_score(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get hill/climb score for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Hill score data
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_hill_score(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching hill score for {date_str}: {e}")
+            return {}
+
+    # ==================== BODY COMPOSITION ====================
+
+    def get_body_composition(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get body composition data for a specific date (requires Garmin scale).
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Body composition data (weight, body fat %, muscle mass, etc.)
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_body_composition(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching body composition for {date_str}: {e}")
+            return {}
+
+    def get_weigh_ins(self, start_date: str, end_date: str) -> List[Dict[str, Any]]:
+        """
+        Get weight measurements for a date range.
+
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+
+        Returns:
+            List of weigh-in records
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_weigh_ins(start_date, end_date)
+        except Exception as e:
+            print(f"✗ Error fetching weigh-ins: {e}")
+            return []
+
+    # ==================== DAILY SUMMARIES ====================
+
+    def get_steps_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get steps data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Steps data including total, goal, distance
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_steps_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching steps data for {date_str}: {e}")
+            return {}
+
+    def get_floors(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get floors climbed data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Floors climbed data
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_floors(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching floors data for {date_str}: {e}")
+            return {}
+
+    def get_hydration_data(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get hydration/water intake data for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Hydration data
+        """
+        self._ensure_authenticated()
+        try:
+            return self.client.get_hydration_data(date_str)
+        except Exception as e:
+            print(f"✗ Error fetching hydration data for {date_str}: {e}")
+            return {}
+
+    # ==================== AGGREGATED DATA ====================
+
+    def get_daily_wellness(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get all wellness data for a specific date in one call.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Combined wellness data dict
+        """
+        return {
+            "date": date_str,
+            "sleep": self.get_sleep_data(date_str),
+            "stress": self.get_stress_data(date_str),
+            "body_battery": self.get_body_battery(date_str),
+            "resting_hr": self.get_resting_heart_rate(date_str),
+            "hrv": self.get_hrv_data(date_str),
+            "respiration": self.get_respiration_data(date_str),
+            "spo2": self.get_spo2_data(date_str),
+            "steps": self.get_steps_data(date_str),
+            "training_readiness": self.get_training_readiness(date_str),
+            "training_status": self.get_training_status(date_str),
+        }
+
+    def get_fitness_metrics(self, date_str: str) -> Dict[str, Any]:
+        """
+        Get all fitness/performance metrics for a specific date.
+
+        Args:
+            date_str: Date in YYYY-MM-DD format
+
+        Returns:
+            Combined fitness metrics dict
+        """
+        return {
+            "date": date_str,
+            "max_metrics": self.get_max_metrics(date_str),
+            "endurance_score": self.get_endurance_score(date_str),
+            "hill_score": self.get_hill_score(date_str),
+            "training_readiness": self.get_training_readiness(date_str),
+            "training_status": self.get_training_status(date_str),
+        }
