@@ -55,6 +55,10 @@ Key SQLAlchemy models in `database/models.py`:
 - **GoalProgress** - Progress toward goals over time
 - **WorkoutAnalysis** - Training pattern analysis and recommendations
 - **ProgressMetric** - Body composition, performance tests, etc.
+- **ScheduledWorkout** - Planned workouts from training plan
+  - `scheduled_date`, `workout_type`, `week_number`
+  - `garmin_workout_id`, `garmin_calendar_date` (Garmin sync tracking)
+  - `status`: scheduled, completed, skipped, modified
 
 Data sources:
 - **Hevy**: Strength training workouts and exercises
@@ -75,6 +79,31 @@ Data sources:
 - **Data pulled**: Strength workouts, exercises, sets (weight/reps/RPE)
 - **Client**: `client.py` handles API requests
 - **Importer**: `activity_importer.py` syncs to database
+
+## Garmin Workout Sync
+
+### Authentication
+- Uses `garth` library for OAuth token management
+- Tokens cached in `~/.garmin_tokens/`
+- Re-authenticate if tokens expire: `garth.login(email, password)` then `garth.save(path)`
+
+### API Endpoints Used
+- `GET /workout-service/workouts` - List all workouts
+- `GET /workout-service/workout/{id}` - Get workout details
+- `POST /workout-service/workout` - Create workout
+- `PUT /workout-service/workout/{id}` - Update workout
+- `DELETE /workout-service/workout/{id}` - Delete workout
+- `POST /workout-service/schedule/{workoutId}` - Schedule workout on calendar
+- `GET /calendar-service/year/{year}/month/{month}` - View calendar
+
+### Swim Workout Settings
+- Pool size: 25 yards (unitId: 230, unitKey: "yard")
+- Stroke type: freestyle (strokeTypeId: 6)
+
+### Sport Types
+- Swimming: sportTypeId 4
+- Strength Training: sportTypeId 5
+- Running: sportTypeId 1
 
 ## Goal Analysis (`analyst/`)
 - **GoalAnalyzer**: Assesses progress toward goals, calculates trends
@@ -115,8 +144,15 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
 
 ### Training Plan Structure
 - **24 weeks**, 3 phases + taper
-- **Test weeks**: 1, 12, 24 (400 TT)
-- **Weekly cadence**: Swim A (Mon), Lift A (Tue), VO2 (Wed), Swim B (Thu), Lift B (Fri)
+- **Test weeks**: 2, 12, 24 (400 TT)
+- **Weekly cadence**:
+  - Mon: Swim A (Threshold/CSS)
+  - Tue: Lift A (Lower body)
+  - Wed: REST
+  - Thu: Swim B (VO2/400-specific) or Test on test weeks
+  - Fri: VO2 Session (Run/Row/Bike)
+  - Sat: Lift B (Upper body)
+  - Sun: REST
 
 ## Common Commands
 ```bash
