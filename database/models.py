@@ -512,6 +512,61 @@ class GoalProgress(Base):
         return f"<GoalProgress(goal_id={self.goal_id}, date={self.date}, progress={self.progress_percent}%)>"
 
 
+class ScheduledWorkout(Base):
+    """
+    Scheduled workout from the base training plan.
+    Tracks workout scheduling, completion status, and modifications.
+    """
+
+    __tablename__ = "scheduled_workouts"
+    __table_args__ = (
+        UniqueConstraint("athlete_id", "scheduled_date", "workout_type", name="uix_scheduled_athlete_date_type"),
+        Index("idx_scheduled_workouts_date", "athlete_id", "scheduled_date"),
+        Index("idx_scheduled_workouts_week", "athlete_id", "week_number"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    athlete_id = Column(Integer, ForeignKey("athletes.id"), nullable=False)
+
+    # Schedule info
+    scheduled_date = Column(Date, nullable=False)
+    workout_type = Column(String, nullable=False)  # 'swim_a', 'swim_b', 'lift_a', 'lift_b', 'vo2', 'swim_test'
+    workout_name = Column(String)
+    week_number = Column(Integer, nullable=False)
+    day_of_week = Column(Integer)  # 1-7
+
+    # Workout details
+    duration_minutes = Column(Integer)
+    is_test_week = Column(Boolean, default=False)
+    workout_data_json = Column(Text)  # Full workout structure as JSON
+
+    # Status tracking
+    status = Column(String, default="scheduled")  # 'scheduled', 'completed', 'skipped', 'modified'
+    completed_date = Column(Date)
+    actual_data_json = Column(Text)  # Actual workout data if different from planned
+
+    # Modifications
+    modification_reason = Column(Text)
+    modified_by = Column(String)  # 'ai', 'user', 'auto'
+
+    # Garmin integration
+    garmin_workout_id = Column(String)  # ID from Garmin if uploaded
+    garmin_calendar_date = Column(Date)  # Date on Garmin calendar
+
+    # Notes
+    notes = Column(Text)
+
+    # Tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    athlete = relationship("Athlete")
+
+    def __repr__(self):
+        return f"<ScheduledWorkout(date={self.scheduled_date}, type='{self.workout_type}', status='{self.status}')>"
+
+
 class WorkoutAnalysis(Base):
     """
     Analysis of workout patterns and recommendations.

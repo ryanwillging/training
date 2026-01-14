@@ -19,6 +19,7 @@ from integrations.garmin.activity_importer import GarminActivityImporter
 from integrations.garmin.wellness_importer import GarminWellnessImporter
 from integrations.hevy.activity_importer import HevyActivityImporter
 from analyst.goal_analyzer import GoalAnalyzer, WorkoutRecommendationEngine
+from analyst.plan_manager import TrainingPlanManager
 
 router = APIRouter(prefix="/cron", tags=["cron"])
 
@@ -140,6 +141,25 @@ async def cron_sync(
         except Exception as e:
             results["goal_analysis"] = {"error": str(e)}
             results["errors"].append(f"Goal analysis failed: {str(e)}")
+
+        # Run AI-powered plan evaluation (ChatGPT thinking mode)
+        try:
+            plan_manager = TrainingPlanManager(db, athlete_id)
+            if plan_manager.get_plan_start_date():  # Only run if plan is initialized
+                evaluation_results = plan_manager.run_nightly_evaluation()
+                results["plan_evaluation"] = {
+                    "current_week": evaluation_results.get("current_week"),
+                    "assessment": evaluation_results.get("evaluation", {}).get("overall_assessment"),
+                    "modifications_proposed": evaluation_results.get("modifications_proposed", 0),
+                    "confidence": evaluation_results.get("evaluation", {}).get("confidence_score")
+                }
+                if evaluation_results.get("errors"):
+                    results["errors"].extend([f"Plan evaluation: {e}" for e in evaluation_results["errors"]])
+            else:
+                results["plan_evaluation"] = {"status": "plan_not_initialized"}
+        except Exception as e:
+            results["plan_evaluation"] = {"error": str(e)}
+            results["errors"].append(f"Plan evaluation failed: {str(e)}")
 
         # Calculate totals
         total_imported = (

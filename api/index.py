@@ -172,6 +172,46 @@ class handler(BaseHTTPRequestHandler):
                 "status": "configured"
             })
 
+        # Plan status
+        if path == "/api/plan/status":
+            db = get_db_session()
+            if db:
+                try:
+                    status = self._get_plan_status(db)
+                    db.close()
+                    return self.send_json(200, status)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(200, {"error": "Database not configured"})
+
+        # Plan week summary
+        if path == "/api/plan/week":
+            db = get_db_session()
+            if db:
+                try:
+                    summary = self._get_week_summary(db)
+                    db.close()
+                    return self.send_json(200, summary)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(200, {"error": "Database not configured"})
+
+        # Plan upcoming workouts
+        if path == "/api/plan/upcoming":
+            days = int(query.get("days", ["7"])[0])
+            db = get_db_session()
+            if db:
+                try:
+                    workouts = self._get_upcoming_workouts(db, days)
+                    db.close()
+                    return self.send_json(200, {"days_ahead": days, "workouts": workouts})
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(200, {"error": "Database not configured"})
+
         return self.send_json(404, {"error": "Not found", "path": path})
 
     def do_POST(self):
@@ -257,6 +297,39 @@ class handler(BaseHTTPRequestHandler):
             if cron_secret and not auth.endswith(cron_secret):
                 return self.send_json(401, {"error": "Unauthorized"})
             return self.send_json(200, {"status": "success", "message": "Sync endpoint ready"})
+
+        # Plan initialize
+        if path == "/api/plan/initialize":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except:
+                return self.send_json(400, {"error": "Invalid JSON"})
+
+            start_date_str = data.get("start_date")
+            if not start_date_str:
+                return self.send_json(400, {"error": "start_date required"})
+
+            try:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+                if start_date.weekday() != 0:
+                    return self.send_json(400, {
+                        "error": f"Start date should be a Monday. {start_date_str} is a {start_date.strftime('%A')}"
+                    })
+            except ValueError as e:
+                return self.send_json(400, {"error": f"Invalid date format: {e}"})
+
+            db = get_db_session()
+            if db:
+                try:
+                    result = self._initialize_plan(db, start_date)
+                    db.close()
+                    return self.send_json(200, result)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(400, {"error": "Database not configured"})
 
         return self.send_json(404, {"error": "Not found"})
 
@@ -698,4 +771,198 @@ class handler(BaseHTTPRequestHandler):
             "reports": reports,
             "count": len(reports),
             "weekly_url": "/api/reports/weekly"
+        }
+
+    def _get_plan_status(self, db):
+        """Get training plan status."""
+        from database.models import Athlete, ScheduledWorkout
+
+        athlete = db.query(Athlete).first()
+        if not athlete:
+            return {"initialized": False, "error": "No athlete found"}
+
+        goals_data = json.loads(athlete.goals) if athlete.goals else {}
+        plan_info = goals_data.get("training_plan", {})
+        start_date_str = plan_info.get("start_date")
+
+        if not start_date_str:
+            return {
+                "initialized": False,
+                "start_date": None,
+                "current_week": None,
+                "progress": {}
+            }
+
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        days_elapsed = (date.today() - start_date).days
+        current_week = min(max(1, (days_elapsed // 7) + 1), 24)
+
+        # Get progress stats
+        scheduled = db.query(ScheduledWorkout).filter(
+            ScheduledWorkout.athlete_id == athlete.id
+        ).all()
+
+        completed = len([s for s in scheduled if s.status == "completed"])
+        total = len(scheduled)
+
+        return {
+            "initialized": True,
+            "start_date": start_date_str,
+            "current_week": current_week,
+            "is_test_week": current_week in [1, 12, 24],
+            "progress": {
+                "total_scheduled": total,
+                "completed": completed,
+                "adherence_rate": round((completed / total * 100) if total > 0 else 0, 1)
+            }
+        }
+
+    def _get_week_summary(self, db, week_number=None):
+        """Get summary for a specific week or current week."""
+        from database.models import Athlete, ScheduledWorkout
+
+        athlete = db.query(Athlete).first()
+        if not athlete:
+            return {"error": "No athlete found"}
+
+        goals_data = json.loads(athlete.goals) if athlete.goals else {}
+        plan_info = goals_data.get("training_plan", {})
+        start_date_str = plan_info.get("start_date")
+
+        if not start_date_str:
+            return {"error": "Plan not initialized"}
+
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        if week_number is None:
+            days_elapsed = (date.today() - start_date).days
+            week_number = min(max(1, (days_elapsed // 7) + 1), 24)
+
+        workouts = db.query(ScheduledWorkout).filter(
+            ScheduledWorkout.athlete_id == athlete.id,
+            ScheduledWorkout.week_number == week_number
+        ).order_by(ScheduledWorkout.scheduled_date).all()
+
+        return {
+            "week": week_number,
+            "is_test_week": week_number in [1, 12, 24],
+            "workouts": [
+                {
+                    "type": w.workout_type,
+                    "name": w.workout_name,
+                    "date": str(w.scheduled_date) if w.scheduled_date else None,
+                    "status": w.status,
+                    "duration_minutes": w.duration_minutes
+                }
+                for w in workouts
+            ],
+            "completed": len([w for w in workouts if w.status == "completed"]),
+            "total": len(workouts)
+        }
+
+    def _get_upcoming_workouts(self, db, days=7):
+        """Get upcoming scheduled workouts."""
+        from database.models import Athlete, ScheduledWorkout
+
+        athlete = db.query(Athlete).first()
+        if not athlete:
+            return []
+
+        today = date.today()
+        end_date = today + timedelta(days=days)
+
+        workouts = db.query(ScheduledWorkout).filter(
+            ScheduledWorkout.athlete_id == athlete.id,
+            ScheduledWorkout.scheduled_date >= today,
+            ScheduledWorkout.scheduled_date <= end_date,
+            ScheduledWorkout.status == "scheduled"
+        ).order_by(ScheduledWorkout.scheduled_date).all()
+
+        return [
+            {
+                "date": str(w.scheduled_date),
+                "type": w.workout_type,
+                "name": w.workout_name,
+                "week": w.week_number,
+                "is_test_week": w.is_test_week
+            }
+            for w in workouts
+        ]
+
+    def _initialize_plan(self, db, start_date):
+        """Initialize the 24-week training plan."""
+        from database.models import Athlete, ScheduledWorkout
+
+        athlete = db.query(Athlete).first()
+        if not athlete:
+            return {"error": "No athlete found"}
+
+        # Update athlete goals with plan info
+        goals_data = json.loads(athlete.goals) if athlete.goals else {}
+        goals_data["training_plan"] = {
+            "name": "24-Week Performance Plan",
+            "start_date": str(start_date),
+            "total_weeks": 24,
+            "test_weeks": [1, 12, 24],
+            "initialized_at": str(date.today())
+        }
+        athlete.goals = json.dumps(goals_data)
+
+        # Generate scheduled workouts for all 24 weeks
+        workout_types = [
+            ("swim_a", "Swim A", 45),
+            ("lift_a", "Lift A (Lower)", 45),
+            ("vo2", "VO2 Session", 40),
+            ("swim_b", "Swim B", 45),
+            ("lift_b", "Lift B (Upper)", 45)
+        ]
+        test_weeks = [1, 12, 24]
+        total_scheduled = 0
+
+        for week in range(1, 25):
+            week_start = start_date + timedelta(weeks=week - 1)
+            is_test = week in test_weeks
+
+            for day_idx, (wtype, wname, duration) in enumerate(workout_types):
+                workout_date = week_start + timedelta(days=day_idx)
+
+                # On test weeks, Swim B becomes swim_test
+                actual_type = wtype
+                actual_name = wname
+                if is_test and wtype == "swim_b":
+                    actual_type = "swim_test"
+                    actual_name = f"400 TT Test - Week {week}"
+                else:
+                    actual_name = f"{wname} - Week {week}"
+
+                # Check if already exists
+                existing = db.query(ScheduledWorkout).filter(
+                    ScheduledWorkout.athlete_id == athlete.id,
+                    ScheduledWorkout.scheduled_date == workout_date,
+                    ScheduledWorkout.workout_type == actual_type
+                ).first()
+
+                if not existing:
+                    scheduled = ScheduledWorkout(
+                        athlete_id=athlete.id,
+                        scheduled_date=workout_date,
+                        workout_type=actual_type,
+                        workout_name=actual_name,
+                        week_number=week,
+                        day_of_week=day_idx + 1,
+                        duration_minutes=duration,
+                        is_test_week=is_test,
+                        status="scheduled"
+                    )
+                    db.add(scheduled)
+                    total_scheduled += 1
+
+        db.commit()
+
+        return {
+            "plan_name": "24-Week Performance Plan",
+            "start_date": str(start_date),
+            "total_weeks": 24,
+            "total_workouts_scheduled": total_scheduled,
+            "test_weeks": test_weeks,
+            "status": "initialized"
         }

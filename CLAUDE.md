@@ -81,6 +81,43 @@ Data sources:
 - **WorkoutRecommendationEngine**: Generates weekly workout suggestions
 - Runs automatically via daily cron sync
 
+## Training Plan System (`analyst/` + `plans/`)
+The 24-week training plan system provides automated workout scheduling, Garmin integration, and AI-powered plan evaluation.
+
+### Components
+- **plan_parser.py**: Parses `plans/base_training_plan.md` into structured workout data
+- **workout_scheduler.py**: Assigns dates to workouts, manages plan state
+- **chatgpt_evaluator.py**: AI evaluation using OpenAI o1 (reasoning mode)
+- **plan_manager.py**: Orchestrates all plan components
+
+### Garmin Workout Integration
+- **workout_manager.py**: Creates workouts in Garmin Connect format
+- Supports: swim (A/B/test), lift (A/B), VO2 sessions
+- Schedules workouts on Garmin calendar
+
+### API Endpoints (Plan)
+- `/api/plan/status` - Current plan status and progress
+- `/api/plan/initialize` - Initialize plan with start date (POST)
+- `/api/plan/week` - Current week summary
+- `/api/plan/week/{number}` - Specific week summary
+- `/api/plan/sync-garmin` - Sync workouts to Garmin (POST)
+- `/api/plan/evaluate` - Run AI evaluation (POST)
+- `/api/plan/upcoming` - Upcoming scheduled workouts
+
+### Nightly Cron Flow
+1. Sync Garmin activities and wellness data
+2. Sync Hevy workouts
+3. Run goal analysis
+4. **Run AI plan evaluation** (ChatGPT o1 reasoning mode)
+   - Analyzes wellness, workouts, goal progress
+   - Proposes modifications if needed
+   - High-confidence, high-priority changes auto-applied
+
+### Training Plan Structure
+- **24 weeks**, 3 phases + taper
+- **Test weeks**: 1, 12, 24 (400 TT)
+- **Weekly cadence**: Swim A (Mon), Lift A (Tue), VO2 (Wed), Swim B (Thu), Lift B (Fri)
+
 ## Common Commands
 ```bash
 # Deploy to production
@@ -165,6 +202,8 @@ All required variables are configured:
 - `GARMIN_PASSWORD` - Garmin Connect password
 - `HEVY_API_KEY` - Hevy API key
 - `CRON_SECRET` - Secret for cron authorization
+- `OPENAI_API_KEY` - OpenAI API key (for ChatGPT plan evaluation)
+- `OPENAI_MODEL` - Model to use (default: o1-preview)
 
 ## Troubleshooting
 

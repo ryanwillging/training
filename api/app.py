@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from api.routes import import_router, metrics_router, reports_router
+from api.routes import import_router, metrics_router, reports_router, plan_router
 from api.cron.sync import router as cron_router
 
 # Lazy database initialization to support serverless cold starts
@@ -48,6 +48,7 @@ app.include_router(import_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")
 app.include_router(cron_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
+app.include_router(plan_router, prefix="/api")
 
 
 @app.on_event("startup")
@@ -123,6 +124,14 @@ def root():
             "reports": {
                 "daily": "/api/reports/daily",
                 "weekly": "/api/reports/weekly"
+            },
+            "plan": {
+                "status": "/api/plan/status",
+                "initialize": "/api/plan/initialize",
+                "week": "/api/plan/week",
+                "sync_garmin": "/api/plan/sync-garmin",
+                "evaluate": "/api/plan/evaluate",
+                "upcoming": "/api/plan/upcoming"
             },
             "docs": "/docs",
             "openapi": "/openapi.json"
