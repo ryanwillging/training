@@ -49,28 +49,37 @@ training/
 
 ## Data Models
 Key SQLAlchemy models in `database/models.py`:
-- **Workout** - Training sessions (date, type, duration, source)
-- **Exercise** - Individual exercises within workouts
-- **ExerciseSet** - Sets with weight, reps, RPE tracking
-- **CardioActivity** - Garmin cardio data (heart rate, pace, etc.)
+- **CompletedActivity** - Training sessions (date, type, duration, source)
+- **DailyWellness** - Garmin wellness data (sleep, stress, HRV, body battery, etc.)
+- **Goal** - Structured goals with targets and tracking
+- **GoalProgress** - Progress toward goals over time
+- **WorkoutAnalysis** - Training pattern analysis and recommendations
+- **ProgressMetric** - Body composition, performance tests, etc.
 
 Data sources:
 - **Hevy**: Strength training workouts and exercises
-- **Garmin**: Cardio activities, heart rate, GPS data
+- **Garmin**: Activities, wellness data, fitness metrics
 
 ## Integrations
 
 ### Garmin Connect (`integrations/garmin/`)
 - **Authentication**: Email/password via `garminconnect` library
-- **Data pulled**: Cardio activities, heart rate, GPS tracks
-- **Client**: `client.py` handles auth and API calls
-- **Parser**: `parsers.py` transforms Garmin data to our models
+- **Activities**: Cardio, swimming, cycling, strength
+- **Wellness**: Sleep, stress, body battery, HRV, SpO2, respiration
+- **Training**: Readiness score, training status, VO2 max, race predictions
+- **Body**: Weight, body composition (if Garmin scale connected)
+- **Files**: `client.py` (API), `parsers.py` (data transform), `wellness_importer.py` (wellness sync)
 
 ### Hevy (`integrations/hevy/`)
 - **Authentication**: API key (Bearer token)
 - **Data pulled**: Strength workouts, exercises, sets (weight/reps/RPE)
 - **Client**: `client.py` handles API requests
 - **Importer**: `activity_importer.py` syncs to database
+
+## Goal Analysis (`analyst/`)
+- **GoalAnalyzer**: Assesses progress toward goals, calculates trends
+- **WorkoutRecommendationEngine**: Generates weekly workout suggestions
+- Runs automatically via daily cron sync
 
 ## Common Commands
 ```bash
