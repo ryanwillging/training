@@ -106,6 +106,28 @@ git push origin <branch>
 **Important**: Commit working changes frequently. Don't let local drift from the repository.
 
 ## Testing
+
+### Post-Deployment Tests (Playwright)
+Run after each deployment to verify production is working:
+```bash
+# Test production
+./scripts/test_deployment.sh
+
+# Test local server
+./scripts/test_deployment.sh --local
+
+# Or with pytest directly
+pytest tests/e2e/ --base-url https://training.ryanwillging.com
+```
+
+Tests verify:
+- Health endpoint and database connectivity
+- Daily/weekly report generation
+- Report quality (no errors, proper HTML/CSS)
+- Response times
+- Error handling
+
+### Unit Tests
 ```bash
 # Run all tests
 pytest
