@@ -10,11 +10,22 @@ import os
 from pathlib import Path
 import tempfile
 
-from api.routes import import_router, metrics_router
-from database.base import engine, Base
+from api.routes import import_router, metrics_router, reports_router
+from api.cron.sync import router as cron_router
 
-# Create database tables on startup
-Base.metadata.create_all(bind=engine)
+# Lazy database initialization to support serverless cold starts
+_db_initialized = False
+
+def ensure_db():
+    """Initialize database tables on first use."""
+    global _db_initialized
+    if not _db_initialized:
+        try:
+            from database.base import engine, Base
+            Base.metadata.create_all(bind=engine)
+            _db_initialized = True
+        except Exception as e:
+            print(f"Database initialization skipped: {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -35,6 +46,14 @@ app.add_middleware(
 # Include routers
 app.include_router(import_router, prefix="/api")
 app.include_router(metrics_router, prefix="/api")
+app.include_router(cron_router, prefix="/api")
+app.include_router(reports_router, prefix="/api")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup if available."""
+    ensure_db()
 
 
 # Legacy endpoint - kept for backwards compatibility
@@ -97,6 +116,14 @@ def root():
                 "subjective": "/api/metrics/subjective",
                 "history": "/api/metrics/history/{metric_type}"
             },
+            "cron": {
+                "sync": "/api/cron/sync",
+                "status": "/api/cron/sync/status"
+            },
+            "reports": {
+                "daily": "/api/reports/daily",
+                "weekly": "/api/reports/weekly"
+            },
             "docs": "/docs",
             "openapi": "/openapi.json"
         }
@@ -106,4 +133,5 @@ def root():
 @app.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "healthy"}
+    db_status = "connected" if _db_initialized else "not_configured"
+    return {"status": "healthy", "database": db_status}

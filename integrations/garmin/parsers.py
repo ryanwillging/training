@@ -34,7 +34,12 @@ class GarminActivityParser:
 
         # Get activity type
         activity_type_obj = activity.get('activityType', {})
-        activity_type_key = activity_type_obj.get('typeKey', 'unknown')
+        if isinstance(activity_type_obj, str):
+            activity_type_key = activity_type_obj
+        elif isinstance(activity_type_obj, dict):
+            activity_type_key = activity_type_obj.get('typeKey', 'unknown')
+        else:
+            activity_type_key = 'unknown'
 
         # Map Garmin activity types to our types
         type_mapping = {
@@ -309,7 +314,12 @@ def parse_garmin_activity(
         Dictionary with activity data in our format
     """
     activity_type_obj = activity.get('activityType', {})
-    activity_type_key = activity_type_obj.get('typeKey', 'unknown')
+    if isinstance(activity_type_obj, str):
+        activity_type_key = activity_type_obj
+    elif isinstance(activity_type_obj, dict):
+        activity_type_key = activity_type_obj.get('typeKey', 'unknown')
+    else:
+        activity_type_key = 'unknown'
 
     # Select appropriate parser
     if 'swimming' in activity_type_key.lower():

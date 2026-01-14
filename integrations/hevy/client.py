@@ -5,16 +5,17 @@ Uses the hevy-api-client library to interact with Hevy's API.
 
 import os
 from typing import Optional, List, Dict, Any
-from datetime import date
+from datetime import date, datetime
 from dotenv import load_dotenv
 
 try:
-    from hevy_api.client import HevyClient as HevyAPIClient
-    from hevy_api.models.model import Workout
+    from hevy_api_client import Client
+    from hevy_api_client.api.workouts import get_v1_workouts, get_v1_workouts_count
+    from hevy_api_client.types import UNSET
     HEVY_AVAILABLE = True
 except ImportError:
     HEVY_AVAILABLE = False
-    print("⚠ Warning: hevy-api-client not installed. Run: pip install hevy-api-client")
+    print("Warning: hevy-api-client not installed. Run: pip install hevy-api-client")
 
 load_dotenv()
 
@@ -34,23 +35,20 @@ class HevyClient:
         if not HEVY_AVAILABLE:
             raise ImportError("hevy-api-client is not installed. Run: pip install hevy-api-client")
 
-        self.api_key = api_key or os.getenv("HEVY_API_KEY")
+        self.api_key_str = api_key or os.getenv("HEVY_API_KEY")
 
-        if not self.api_key:
+        if not self.api_key_str:
             raise ValueError(
                 "Hevy API key not provided. Set HEVY_API_KEY environment variable "
                 "or pass it to the constructor."
             )
 
-        # Set environment variable for hevy-api-client
-        os.environ["HEVY_API_KEY"] = self.api_key
+        # Store API key as string for headers
+        self.api_key = self.api_key_str
 
-        try:
-            self.client = HevyAPIClient()
-            print(f"✓ Initialized Hevy API client")
-        except Exception as e:
-            print(f"✗ Failed to initialize Hevy client: {e}")
-            raise
+        # Create the client
+        self.client = Client()
+        print(f"Initialized Hevy API client")
 
     def get_workouts(self, page: int = 1, page_size: int = 10) -> List[Dict[str, Any]]:
         """
@@ -64,9 +62,14 @@ class HevyClient:
             List of workout dictionaries
         """
         try:
-            response = self.client.get_workouts(page=page, pageSize=page_size)
+            response = get_v1_workouts.sync(
+                client=self.client,
+                page=page,
+                page_size=page_size,
+                api_key=self.api_key
+            )
 
-            if hasattr(response, 'workouts') and response.workouts:
+            if response and hasattr(response, 'workouts') and not isinstance(response.workouts, type(UNSET)):
                 # Convert Workout objects to dictionaries
                 workouts = []
                 for workout in response.workouts:
@@ -76,7 +79,7 @@ class HevyClient:
             return []
 
         except Exception as e:
-            print(f"✗ Error fetching workouts: {e}")
+            print(f"Error fetching workouts: {e}")
             raise
 
     def get_all_workouts(self, start_date: Optional[date] = None, end_date: Optional[date] = None) -> List[Dict[str, Any]]:
@@ -92,7 +95,7 @@ class HevyClient:
         """
         all_workouts = []
         page = 1
-        page_size = 50  # Fetch more per page for efficiency
+        page_size = 10  # Hevy API has a page size limit
 
         try:
             while True:
@@ -106,16 +109,19 @@ class HevyClient:
                     workout_date = workout.get('date')
                     if workout_date:
                         if isinstance(workout_date, str):
-                            from datetime import datetime
                             workout_date = datetime.fromisoformat(workout_date.replace('Z', '+00:00')).date()
 
-                        # Check date range
+                        # Workouts are sorted newest first
+                        # If we're past the start_date, we can stop
                         if start_date and workout_date < start_date:
-                            # Workouts are sorted newest first, so we can stop
                             return all_workouts
-                        if start_date and workout_date < start_date:
-                            continue
+
+                        # Skip if after end_date
                         if end_date and workout_date > end_date:
+                            continue
+
+                        # Skip if before start_date
+                        if start_date and workout_date < start_date:
                             continue
 
                     all_workouts.append(workout)
@@ -128,11 +134,11 @@ class HevyClient:
 
                 # Safety check
                 if len(all_workouts) > 1000:
-                    print("⚠ Warning: Retrieved over 1000 workouts, stopping")
+                    print("Warning: Retrieved over 1000 workouts, stopping")
                     break
 
         except Exception as e:
-            print(f"✗ Error fetching workouts: {e}")
+            print(f"Error fetching workouts: {e}")
             raise
 
         return all_workouts
@@ -145,12 +151,15 @@ class HevyClient:
             Workout count
         """
         try:
-            response = self.client.get_workouts_count()
-            if hasattr(response, 'workout_count'):
+            response = get_v1_workouts_count.sync(
+                client=self.client,
+                api_key=self.api_key
+            )
+            if response and hasattr(response, 'workout_count') and not isinstance(response.workout_count, type(UNSET)):
                 return response.workout_count
             return 0
         except Exception as e:
-            print(f"✗ Error fetching workout count: {e}")
+            print(f"Error fetching workout count: {e}")
             return 0
 
     def _workout_to_dict(self, workout: Any) -> Dict[str, Any]:
@@ -163,65 +172,76 @@ class HevyClient:
         Returns:
             Dictionary representation
         """
-        workout_dict = {
-            'id': getattr(workout, 'id', None),
-            'title': getattr(workout, 'title', None),
-            'description': getattr(workout, 'description', None),
-            'start_time': getattr(workout, 'start_time', None),
-            'end_time': getattr(workout, 'end_time', None),
-            'created_at': getattr(workout, 'created_at', None),
-            'updated_at': getattr(workout, 'updated_at', None),
-        }
+        # Use to_dict() if available, otherwise manually extract
+        if hasattr(workout, 'to_dict'):
+            workout_dict = workout.to_dict()
+        else:
+            workout_dict = {
+                'id': getattr(workout, 'id', None),
+                'title': getattr(workout, 'title', None),
+                'description': getattr(workout, 'description', None),
+                'start_time': getattr(workout, 'start_time', None),
+                'end_time': getattr(workout, 'end_time', None),
+                'created_at': getattr(workout, 'created_at', None),
+                'updated_at': getattr(workout, 'updated_at', None),
+                'exercises': [],
+            }
 
-        # Parse start_time to get date
-        if workout_dict['start_time']:
-            from datetime import datetime
-            if isinstance(workout_dict['start_time'], str):
-                dt = datetime.fromisoformat(workout_dict['start_time'].replace('Z', '+00:00'))
+            # Get exercises if available
+            if hasattr(workout, 'exercises') and workout.exercises:
+                for exercise in workout.exercises:
+                    if hasattr(exercise, 'to_dict'):
+                        workout_dict['exercises'].append(exercise.to_dict())
+
+        # Parse start_time to get date and time
+        start_time = workout_dict.get('start_time')
+        if start_time:
+            if isinstance(start_time, (int, float)):
+                # Unix timestamp
+                dt = datetime.fromtimestamp(start_time)
+            elif isinstance(start_time, str):
+                dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
             else:
-                dt = workout_dict['start_time']
-            workout_dict['date'] = dt.date()
-            workout_dict['time'] = dt.time()
+                dt = start_time
+            workout_dict['date'] = dt.date() if hasattr(dt, 'date') else None
+            workout_dict['time'] = dt.time() if hasattr(dt, 'time') else None
         else:
             workout_dict['date'] = None
             workout_dict['time'] = None
 
-        # Get exercises if available
-        if hasattr(workout, 'exercises') and workout.exercises:
-            exercises = []
-            for exercise in workout.exercises:
-                exercise_dict = {
-                    'exercise_id': getattr(exercise, 'exercise_template_id', None),
-                    'title': getattr(exercise, 'title', None),
-                    'exercise_type': getattr(exercise, 'exercise_type', None),
-                    'equipment_type': getattr(exercise, 'equipment_type', None),
-                    'muscle_group': getattr(exercise, 'muscle_group', None),
-                }
+        # Ensure exercises have proper structure
+        exercises = workout_dict.get('exercises', [])
+        parsed_exercises = []
+        for exercise in exercises:
+            exercise_dict = {
+                'exercise_id': exercise.get('exercise_template_id'),
+                'title': exercise.get('title'),
+                'exercise_type': exercise.get('exercise_type'),
+                'equipment_type': exercise.get('equipment_type'),
+                'muscle_group': exercise.get('muscle_group'),
+                'sets': []
+            }
 
-                # Get sets if available
-                if hasattr(exercise, 'sets') and exercise.sets:
-                    sets = []
-                    for set_obj in exercise.sets:
-                        set_dict = {
-                            'set_index': getattr(set_obj, 'index', None),
-                            'set_type': getattr(set_obj, 'set_type', None),
-                            'weight_kg': getattr(set_obj, 'weight_kg', None),
-                            'reps': getattr(set_obj, 'reps', None),
-                            'distance_meters': getattr(set_obj, 'distance_meters', None),
-                            'duration_seconds': getattr(set_obj, 'duration_seconds', None),
-                            'rpe': getattr(set_obj, 'rpe', None),
-                        }
+            # Parse sets
+            sets = exercise.get('sets', [])
+            for i, set_obj in enumerate(sets):
+                if isinstance(set_obj, dict):
+                    set_dict = {
+                        'set_index': set_obj.get('index', i),
+                        'set_type': set_obj.get('set_type'),
+                        'weight_kg': set_obj.get('weight_kg'),
+                        'reps': set_obj.get('reps'),
+                        'distance_meters': set_obj.get('distance_meters'),
+                        'duration_seconds': set_obj.get('duration_seconds'),
+                        'rpe': set_obj.get('rpe'),
+                    }
+                    # Convert weight to lbs
+                    if set_dict['weight_kg']:
+                        set_dict['weight_lbs'] = round(set_dict['weight_kg'] * 2.20462, 2)
+                    exercise_dict['sets'].append(set_dict)
 
-                        # Convert weight to lbs if available
-                        if set_dict['weight_kg']:
-                            set_dict['weight_lbs'] = round(set_dict['weight_kg'] * 2.20462, 2)
+            parsed_exercises.append(exercise_dict)
 
-                        sets.append(set_dict)
-
-                    exercise_dict['sets'] = sets
-
-                exercises.append(exercise_dict)
-
-            workout_dict['exercises'] = exercises
+        workout_dict['exercises'] = parsed_exercises
 
         return workout_dict

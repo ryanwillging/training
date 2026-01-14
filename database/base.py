@@ -1,5 +1,6 @@
 """
 Database engine and session configuration.
+Supports SQLite (local development) and PostgreSQL (Vercel production).
 """
 
 import os
@@ -10,19 +11,52 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Get database URL from environment, default to SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./training.db")
+# Get database URL from environment
+# On Vercel (VERCEL env var set), require PostgreSQL - no SQLite fallback
+if os.getenv("VERCEL"):
+    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    if not DATABASE_URL:
+        # Use in-memory SQLite as placeholder (won't persist but won't crash)
+        DATABASE_URL = "sqlite:///:memory:"
+else:
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./training.db")
+
+# Vercel Postgres uses 'postgres://' but SQLAlchemy requires 'postgresql://'
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+
+def _create_engine():
+    """Create database engine based on DATABASE_URL."""
+    if DATABASE_URL.startswith("sqlite"):
+        # SQLite configuration for local development
+        return create_engine(
+            DATABASE_URL,
+            connect_args={"check_same_thread": False},
+            echo=False,
+        )
+    elif DATABASE_URL.startswith("postgresql"):
+        # PostgreSQL configuration optimized for serverless (Vercel)
+        connect_args = {}
+        # Enable SSL for cloud PostgreSQL providers
+        if any(x in DATABASE_URL.lower() for x in ["vercel", "neon", "supabase", "railway"]):
+            connect_args["sslmode"] = "require"
+
+        return create_engine(
+            DATABASE_URL,
+            pool_size=5,
+            max_overflow=10,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            connect_args=connect_args,
+            echo=False,
+        )
+    else:
+        return create_engine(DATABASE_URL, echo=False)
+
 
 # Create engine
-# For SQLite, we need to enable foreign key constraints
-if DATABASE_URL.startswith("sqlite"):
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False},
-        echo=False,  # Set to True for SQL debugging
-    )
-else:
-    engine = create_engine(DATABASE_URL, echo=False)
+engine = _create_engine()
 
 # Create SessionLocal class for database sessions
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

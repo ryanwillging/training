@@ -21,3 +21,5 @@ venv/
 
 # Garmin FIT outputs
 *.fit
+.vercel
+.env*.local

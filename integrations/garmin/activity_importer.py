@@ -4,7 +4,7 @@ Fetches activities from Garmin Connect and stores them in the database.
 """
 
 from typing import Optional, List, Tuple
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
@@ -150,7 +150,7 @@ class GarminActivityImporter:
             Tuple of (imported_count, skipped_count, error_messages)
         """
         end_date = date.today()
-        start_date = date.today() - datetime.timedelta(days=days)
+        start_date = date.today() - timedelta(days=days)
         return self.import_activities(start_date, end_date)
 
     def import_activity_by_id(self, activity_id: int) -> bool:

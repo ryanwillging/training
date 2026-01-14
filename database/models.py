@@ -314,3 +314,39 @@ class PlanAdjustment(Base):
 
     def __repr__(self):
         return f"<PlanAdjustment(id={self.id}, type='{self.adjustment_type}', date={self.adjustment_date})>"
+
+
+class Report(Base):
+    """
+    Generated training reports (daily, weekly summaries).
+    Stores HTML content for Tufte-style reports.
+    """
+
+    __tablename__ = "reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    athlete_id = Column(Integer, ForeignKey("athletes.id"), nullable=False)
+    report_date = Column(Date, nullable=False)
+    report_type = Column(String, nullable=False)  # 'daily', 'weekly'
+
+    # Report content
+    html_content = Column(Text, nullable=False)
+
+    # Metadata for quick access (JSON)
+    metadata_json = Column(Text)  # Summary stats without parsing HTML
+
+    # Tracking
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Unique constraint: one report per athlete/date/type
+    __table_args__ = (
+        UniqueConstraint("athlete_id", "report_date", "report_type", name="uix_report_athlete_date_type"),
+        Index("idx_reports_athlete_date", "athlete_id", "report_date"),
+    )
+
+    # Relationships
+    athlete = relationship("Athlete")
+
+    def __repr__(self):
+        return f"<Report(id={self.id}, type='{self.report_type}', date={self.report_date})>"

@@ -158,8 +158,11 @@ class GarminClient:
         self._ensure_authenticated()
 
         try:
-            splits = self.client.get_activity_splits(activity_id)
-            return splits
+            splits_response = self.client.get_activity_splits(activity_id)
+            # Garmin API returns a dict with lapDTOs - extract the laps list
+            if isinstance(splits_response, dict):
+                return splits_response.get('lapDTOs', [])
+            return splits_response if splits_response else []
         except Exception as e:
             print(f"✗ Error fetching splits for activity {activity_id}: {e}")
             raise
