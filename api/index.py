@@ -99,6 +99,32 @@ class handler(BaseHTTPRequestHandler):
                     return self.send_json(500, {"error": str(e)})
             return self.send_html(self._no_db_html("Daily Report"))
 
+        # Weekly report
+        if path == "/api/reports/weekly":
+            db = get_db_session()
+            if db:
+                try:
+                    html = self._generate_weekly_report(db)
+                    db.close()
+                    return self.send_html(html)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_html(self._no_db_html("Weekly Report"))
+
+        # Report list
+        if path == "/api/reports/list":
+            db = get_db_session()
+            if db:
+                try:
+                    reports = self._get_report_list(db)
+                    db.close()
+                    return self.send_json(200, reports)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(200, {"reports": [], "count": 0, "error": "Database not configured"})
+
         # Stats API
         if path == "/api/stats":
             db = get_db_session()
@@ -538,4 +564,138 @@ class handler(BaseHTTPRequestHandler):
                 {"date": str(a.activity_date), "name": a.activity_name, "type": a.activity_type, "duration": a.duration_minutes}
                 for a in recent
             ]
+        }
+
+    def _generate_weekly_report(self, db):
+        """Generate weekly training summary report."""
+        from database.models import CompletedActivity, Athlete
+
+        athlete = db.query(Athlete).first()
+        athlete_name = athlete.name if athlete else "Athlete"
+
+        today = date.today()
+        # Week ends on Sunday
+        days_until_sunday = (6 - today.weekday()) % 7
+        week_end = today + timedelta(days=days_until_sunday)
+        week_start = week_end - timedelta(days=6)
+
+        # Current week activities
+        activities = db.query(CompletedActivity).filter(
+            CompletedActivity.activity_date >= week_start,
+            CompletedActivity.activity_date <= week_end
+        ).order_by(CompletedActivity.activity_date).all()
+
+        # Previous week for comparison
+        prev_week_start = week_start - timedelta(days=7)
+        prev_week_end = week_start - timedelta(days=1)
+        prev_activities = db.query(CompletedActivity).filter(
+            CompletedActivity.activity_date >= prev_week_start,
+            CompletedActivity.activity_date <= prev_week_end
+        ).all()
+
+        total_workouts = len(activities)
+        total_minutes = sum(a.duration_minutes or 0 for a in activities)
+        prev_workouts = len(prev_activities)
+        prev_minutes = sum(a.duration_minutes or 0 for a in prev_activities)
+
+        # Build activity list HTML
+        activity_rows = ""
+        for a in activities:
+            activity_rows += f"""<tr>
+                <td style="padding:8px;border-bottom:1px solid #eee;">{a.activity_date.strftime('%a %m/%d')}</td>
+                <td style="padding:8px;border-bottom:1px solid #eee;">{a.activity_name or a.activity_type}</td>
+                <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">{a.duration_minutes or '-'} min</td>
+            </tr>"""
+
+        if not activity_rows:
+            activity_rows = "<tr><td colspan='3' style='padding:16px;color:#666;'>No activities recorded this week</td></tr>"
+
+        # Week over week comparison
+        workout_delta = total_workouts - prev_workouts
+        minute_delta = total_minutes - prev_minutes
+        workout_arrow = "↑" if workout_delta > 0 else "↓" if workout_delta < 0 else "→"
+        minute_arrow = "↑" if minute_delta > 0 else "↓" if minute_delta < 0 else "→"
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Weekly Report - {week_start} to {week_end}</title>
+    <style>
+        body {{ font-family: Georgia, serif; max-width: 720px; margin: 0 auto; padding: 24px; }}
+        h1 {{ font-size: 24px; font-weight: 400; }}
+        .subtitle {{ color: #666; font-size: 14px; margin-bottom: 24px; }}
+        h2 {{ font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-top: 32px; }}
+        .metrics {{ display: flex; gap: 48px; margin: 16px 0; }}
+        .metric {{ }}
+        .metric-value {{ font-size: 36px; font-weight: 300; }}
+        .metric-label {{ font-size: 12px; color: #666; text-transform: uppercase; }}
+        .metric-delta {{ font-size: 14px; color: #666; }}
+        .delta-up {{ color: #059669; }}
+        .delta-down {{ color: #dc2626; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
+        th {{ text-align: left; padding: 8px; border-bottom: 2px solid #333; font-size: 12px; text-transform: uppercase; }}
+        .nav {{ margin-bottom: 16px; }}
+        .nav a {{ color: #2563eb; text-decoration: none; margin-right: 16px; }}
+    </style>
+</head>
+<body>
+    <div class="nav">
+        <a href="/dashboard">← Dashboard</a>
+        <a href="/api/reports/daily">Daily Report</a>
+    </div>
+    <h1>Weekly Training Summary</h1>
+    <p class="subtitle">{athlete_name} | {week_start.strftime('%B %d')} - {week_end.strftime('%B %d, %Y')}</p>
+
+    <h2>Week Totals</h2>
+    <div class="metrics">
+        <div class="metric">
+            <div class="metric-value">{total_workouts}</div>
+            <div class="metric-label">Workouts</div>
+            <div class="metric-delta {'delta-up' if workout_delta > 0 else 'delta-down' if workout_delta < 0 else ''}">{workout_arrow} {abs(workout_delta)} vs last week</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value">{total_minutes}</div>
+            <div class="metric-label">Minutes</div>
+            <div class="metric-delta {'delta-up' if minute_delta > 0 else 'delta-down' if minute_delta < 0 else ''}">{minute_arrow} {abs(minute_delta)} vs last week</div>
+        </div>
+    </div>
+
+    <h2>Activity Log</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Activity</th>
+                <th style="text-align:right;">Duration</th>
+            </tr>
+        </thead>
+        <tbody>
+            {activity_rows}
+        </tbody>
+    </table>
+</body>
+</html>"""
+
+    def _get_report_list(self, db):
+        """Get list of available reports."""
+        from database.models import CompletedActivity
+
+        # Get dates with activities (potential report dates)
+        activities = db.query(CompletedActivity.activity_date).distinct().order_by(
+            CompletedActivity.activity_date.desc()
+        ).limit(30).all()
+
+        reports = []
+        for (activity_date,) in activities:
+            reports.append({
+                "date": str(activity_date),
+                "type": "daily",
+                "url": f"/api/reports/daily?report_date={activity_date}"
+            })
+
+        return {
+            "reports": reports,
+            "count": len(reports),
+            "weekly_url": "/api/reports/weekly"
         }
