@@ -1,0 +1,52 @@
+name: Test Deployment
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  test:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install pytest playwright pytest-playwright
+          playwright install chromium --with-deps
+
+      - name: Wait for Vercel deployment
+        if: github.event_name == 'push'
+        run: |
+          echo "Waiting 60s for Vercel deployment to complete..."
+          sleep 60
+
+      - name: Run E2E tests against production
+        run: |
+          pytest tests/e2e/ \
+            --base-url https://training.ryanwillging.com \
+            -v \
+            --tb=short
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7

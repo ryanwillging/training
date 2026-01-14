@@ -103,7 +103,17 @@ git add -A && git commit -m "Description of changes"
 # Push to remote
 git push origin <branch>
 ```
-**Important**: Commit working changes frequently. Don't let local drift from the repository.
+**Important**:
+- Commit working changes frequently. Don't let local drift from the repository.
+- After merging a branch to main, delete the feature branch locally and remotely.
+
+## CI/CD
+
+### GitHub Actions
+Tests run automatically via `.github/workflows/test-deployment.yml`:
+- **Push to main**: Waits for Vercel deploy, then runs E2E tests
+- **Pull requests**: Runs E2E tests against production
+- **Manual**: Can trigger via GitHub Actions UI
 
 ## Testing
 
