@@ -216,11 +216,10 @@ class handler(BaseHTTPRequestHandler):
 
         # Upcoming workouts page
         if path == "/upcoming" or path == "/api/plan/upcoming-page":
-            days = int(query.get("days", ["14"])[0])
             db = get_db_session()
             if db:
                 try:
-                    html = self._generate_upcoming_page(db, days)
+                    html = self._generate_upcoming_page(db)
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -952,8 +951,8 @@ class handler(BaseHTTPRequestHandler):
             "status": "initialized"
         }
 
-    def _generate_upcoming_page(self, db, days):
-        """Generate the upcoming workouts HTML page."""
+    def _generate_upcoming_page(self, db):
+        """Generate the upcoming workouts HTML page with all future workouts."""
         from database.models import Athlete, ScheduledWorkout
 
         athlete = db.query(Athlete).first()
@@ -961,20 +960,20 @@ class handler(BaseHTTPRequestHandler):
             return self._no_db_html("Upcoming Workouts")
 
         today = date.today()
-        end_date = today + timedelta(days=days)
 
+        # Get ALL future scheduled workouts
         workouts = db.query(ScheduledWorkout).filter(
             ScheduledWorkout.athlete_id == athlete.id,
-            ScheduledWorkout.scheduled_date >= today,
-            ScheduledWorkout.scheduled_date <= end_date
+            ScheduledWorkout.scheduled_date >= today
         ).order_by(ScheduledWorkout.scheduled_date).all()
 
-        # Group by date
-        workouts_by_date = {}
+        # Group by week for better organization
+        workouts_by_week = {}
         for w in workouts:
-            if w.scheduled_date not in workouts_by_date:
-                workouts_by_date[w.scheduled_date] = []
-            workouts_by_date[w.scheduled_date].append(w)
+            week_key = w.week_number
+            if week_key not in workouts_by_week:
+                workouts_by_week[week_key] = []
+            workouts_by_week[week_key].append(w)
 
         # Workout type icons and colors
         workout_styles = {
@@ -986,11 +985,11 @@ class handler(BaseHTTPRequestHandler):
             "vo2": {"icon": "🫀", "label": "VO2 Session", "color": "#d32f2f"},
         }
 
-        if not workouts_by_date:
-            content = f'''
+        if not workouts_by_week:
+            content = '''
             <header class="mb-6">
                 <h1 class="md-headline-large mb-2">Upcoming Workouts</h1>
-                <p class="md-body-large text-secondary">Next {days} days</p>
+                <p class="md-body-large text-secondary">Training Plan</p>
             </header>
             <div class="md-card">
                 <div class="md-card-content" style="text-align: center; padding: 48px;">
@@ -1002,28 +1001,43 @@ class handler(BaseHTTPRequestHandler):
             '''
             return wrap_page(content, "Upcoming Workouts", "/upcoming")
 
-        # Build workout cards by date
-        cards_html = ""
-        for workout_date in sorted(workouts_by_date.keys()):
-            day_workouts = workouts_by_date[workout_date]
+        # Build workout data for JavaScript
+        workout_data_js = {}
+        for w in workouts:
+            workout_details = json.loads(w.workout_data_json) if w.workout_data_json else {}
+            workout_data_js[w.id] = {
+                "id": w.id,
+                "name": w.workout_name,
+                "type": w.workout_type,
+                "date": str(w.scheduled_date),
+                "week": w.week_number,
+                "duration": w.duration_minutes,
+                "is_test_week": w.is_test_week,
+                "status": w.status,
+                "details": workout_details,
+                "notes": w.notes
+            }
 
-            # Format date header
-            if workout_date == today:
-                date_label = "Today"
-                date_class = "today"
-            elif workout_date == today + timedelta(days=1):
-                date_label = "Tomorrow"
-                date_class = "tomorrow"
-            else:
-                date_label = workout_date.strftime("%A, %B %d")
-                date_class = ""
+        # Build week cards
+        weeks_html = ""
+        test_weeks = [2, 12, 24]
 
-            day_name = workout_date.strftime("%a").upper()
-            day_num = workout_date.strftime("%d")
+        for week_num in sorted(workouts_by_week.keys()):
+            week_workouts = workouts_by_week[week_num]
+            is_test_week = week_num in test_weeks
 
-            # Build workout items for this day
+            # Calculate week date range
+            week_dates = [w.scheduled_date for w in week_workouts]
+            week_start = min(week_dates)
+            week_end = max(week_dates)
+
+            # Check if this is current week
+            is_current = any(w.scheduled_date == today for w in week_workouts) or (week_start <= today <= week_end)
+            week_class = "current-week" if is_current else ""
+
+            # Build workout items
             items_html = ""
-            for w in day_workouts:
+            for w in sorted(week_workouts, key=lambda x: x.scheduled_date):
                 style = workout_styles.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
 
                 status_badge = ""
@@ -1034,109 +1048,156 @@ class handler(BaseHTTPRequestHandler):
                 elif w.garmin_workout_id:
                     status_badge = '<span class="workout-status synced">Synced to Garmin</span>'
 
+                is_today = w.scheduled_date == today
+                day_label = "Today" if is_today else w.scheduled_date.strftime("%a %m/%d")
+                today_class = "is-today" if is_today else ""
+
                 duration_text = f"{w.duration_minutes} min" if w.duration_minutes else ""
-                week_badge = f'<span class="week-badge">Week {w.week_number}</span>'
-                test_badge = '<span class="test-badge">TEST WEEK</span>' if w.is_test_week else ""
 
                 items_html += f'''
-                <div class="workout-item" style="border-left-color: {style["color"]};">
+                <div class="workout-item {today_class}" style="border-left-color: {style["color"]};" onclick="showWorkoutDetails({w.id})" data-workout-id="{w.id}">
                     <div class="workout-icon" style="background: {style["color"]}20; color: {style["color"]};">
                         {style["icon"]}
                     </div>
                     <div class="workout-info">
                         <div class="workout-title">{w.workout_name or style["label"]}</div>
                         <div class="workout-meta">
-                            {week_badge}
-                            {test_badge}
-                            {f'<span>{duration_text}</span>' if duration_text else ''}
+                            <span class="workout-day">{day_label}</span>
+                            {f'<span class="workout-duration">{duration_text}</span>' if duration_text else ''}
                         </div>
                     </div>
                     <div class="workout-actions">
                         {status_badge}
+                        <span class="workout-chevron">›</span>
                     </div>
                 </div>
                 '''
 
-            cards_html += f'''
-            <div class="day-card {date_class}">
-                <div class="day-header">
-                    <div class="day-date">
-                        <span class="day-name">{day_name}</span>
-                        <span class="day-num">{day_num}</span>
+            test_badge = '<span class="test-week-badge">TEST WEEK</span>' if is_test_week else ""
+            completed_count = len([w for w in week_workouts if w.status == "completed"])
+            total_count = len(week_workouts)
+            progress_text = f"{completed_count}/{total_count} completed" if completed_count > 0 else f"{total_count} workouts"
+
+            weeks_html += f'''
+            <div class="week-card {week_class}">
+                <div class="week-header" onclick="toggleWeek(this)">
+                    <div class="week-title">
+                        <span class="week-number">Week {week_num}</span>
+                        {test_badge}
                     </div>
-                    <div class="day-label">{date_label}</div>
+                    <div class="week-meta">
+                        <span class="week-dates">{week_start.strftime("%b %d")} - {week_end.strftime("%b %d")}</span>
+                        <span class="week-progress">{progress_text}</span>
+                    </div>
+                    <span class="week-toggle">▼</span>
                 </div>
-                <div class="day-workouts">
+                <div class="week-workouts">
                     {items_html}
                 </div>
             </div>
             '''
 
+        total_workouts = len(workouts)
+        total_weeks = len(workouts_by_week)
+
         content = f'''
         <header class="mb-6">
             <h1 class="md-headline-large mb-2">Upcoming Workouts</h1>
-            <p class="md-body-large text-secondary">Next {days} days · {len(workouts_by_date)} training days</p>
+            <p class="md-body-large text-secondary">{total_workouts} workouts across {total_weeks} weeks</p>
         </header>
 
         <div class="upcoming-grid">
-            {cards_html}
+            {weeks_html}
+        </div>
+
+        <!-- Workout Details Modal -->
+        <div id="workout-modal" class="modal-overlay" onclick="closeModal(event)">
+            <div class="modal-content" onclick="event.stopPropagation()">
+                <div class="modal-header">
+                    <h2 id="modal-title" class="md-title-large">Workout Details</h2>
+                    <button class="modal-close" onclick="closeModal()">&times;</button>
+                </div>
+                <div id="modal-body" class="modal-body">
+                    <!-- Content populated by JS -->
+                </div>
+            </div>
         </div>
 
         <style>
             .upcoming-grid {{
                 display: flex;
                 flex-direction: column;
-                gap: 16px;
+                gap: 12px;
             }}
-            .day-card {{
+
+            /* Week Card */
+            .week-card {{
                 background: var(--md-surface);
                 border-radius: var(--radius-lg);
                 border: 1px solid var(--md-outline-variant);
                 overflow: hidden;
             }}
-            .day-card.today {{
+            .week-card.current-week {{
                 border-color: var(--md-primary);
                 box-shadow: 0 0 0 1px var(--md-primary);
             }}
-            .day-header {{
+            .week-header {{
                 display: flex;
                 align-items: center;
-                gap: 16px;
+                justify-content: space-between;
                 padding: 16px 20px;
                 background: var(--md-surface-variant);
-                border-bottom: 1px solid var(--md-outline-variant);
+                cursor: pointer;
+                user-select: none;
             }}
-            .day-card.today .day-header {{
+            .week-header:hover {{
+                background: #e8e8e8;
+            }}
+            .week-card.current-week .week-header {{
                 background: rgba(25, 118, 210, 0.08);
             }}
-            .day-date {{
+            .week-title {{
                 display: flex;
-                flex-direction: column;
                 align-items: center;
-                min-width: 48px;
+                gap: 10px;
             }}
-            .day-name {{
-                font-size: 11px;
-                font-weight: 600;
-                color: var(--md-on-surface-variant);
-                text-transform: uppercase;
-                letter-spacing: 0.5px;
-            }}
-            .day-num {{
-                font-size: 24px;
-                font-weight: 600;
-                color: var(--md-on-surface);
-                line-height: 1.2;
-            }}
-            .day-card.today .day-num {{
-                color: var(--md-primary);
-            }}
-            .day-label {{
+            .week-number {{
                 font-size: 16px;
-                font-weight: 500;
+                font-weight: 600;
                 color: var(--md-on-surface);
             }}
-            .day-workouts {{
+            .test-week-badge {{
+                font-size: 10px;
+                padding: 3px 8px;
+                background: #ff9800;
+                color: white;
+                border-radius: var(--radius-full);
+                font-weight: 600;
+                text-transform: uppercase;
+            }}
+            .week-meta {{
+                display: flex;
+                gap: 16px;
+                align-items: center;
+            }}
+            .week-dates, .week-progress {{
+                font-size: 13px;
+                color: var(--md-on-surface-variant);
+            }}
+            .week-toggle {{
+                font-size: 12px;
+                color: var(--md-on-surface-variant);
+                transition: transform 0.2s;
+            }}
+            .week-card.collapsed .week-toggle {{
+                transform: rotate(-90deg);
+            }}
+            .week-card.collapsed .week-workouts {{
+                display: none;
+            }}
+
+            /* Workout Items */
+            .week-workouts {{
                 padding: 12px;
                 display: flex;
                 flex-direction: column;
@@ -1150,6 +1211,17 @@ class handler(BaseHTTPRequestHandler):
                 background: var(--md-surface-variant);
                 border-radius: var(--radius-md);
                 border-left: 4px solid;
+                cursor: pointer;
+                transition: background 0.15s, transform 0.1s;
+            }}
+            .workout-item:hover {{
+                background: #e0e0e0;
+            }}
+            .workout-item:active {{
+                transform: scale(0.99);
+            }}
+            .workout-item.is-today {{
+                background: rgba(25, 118, 210, 0.1);
             }}
             .workout-icon {{
                 width: 40px;
@@ -1168,35 +1240,32 @@ class handler(BaseHTTPRequestHandler):
             .workout-title {{
                 font-weight: 500;
                 color: var(--md-on-surface);
-                margin-bottom: 4px;
+                margin-bottom: 2px;
             }}
             .workout-meta {{
                 display: flex;
-                gap: 8px;
-                flex-wrap: wrap;
+                gap: 12px;
                 align-items: center;
             }}
-            .week-badge {{
-                font-size: 11px;
-                padding: 2px 8px;
-                background: var(--md-surface);
-                border-radius: var(--radius-full);
+            .workout-day {{
+                font-size: 12px;
                 color: var(--md-on-surface-variant);
+                font-weight: 500;
             }}
-            .test-badge {{
-                font-size: 10px;
-                padding: 2px 8px;
-                background: #ff9800;
-                color: white;
-                border-radius: var(--radius-full);
-                font-weight: 600;
-            }}
-            .workout-meta span {{
+            .workout-duration {{
                 font-size: 12px;
                 color: var(--md-on-surface-variant);
             }}
             .workout-actions {{
+                display: flex;
+                align-items: center;
+                gap: 8px;
                 flex-shrink: 0;
+            }}
+            .workout-chevron {{
+                font-size: 20px;
+                color: var(--md-on-surface-variant);
+                font-weight: 300;
             }}
             .workout-status {{
                 font-size: 11px;
@@ -1216,9 +1285,147 @@ class handler(BaseHTTPRequestHandler):
                 background: #e3f2fd;
                 color: #1565c0;
             }}
+
+            /* Modal */
+            .modal-overlay {{
+                display: none;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                background: rgba(0,0,0,0.5);
+                z-index: 1000;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            }}
+            .modal-overlay.open {{
+                display: flex;
+            }}
+            .modal-content {{
+                background: var(--md-surface);
+                border-radius: var(--radius-lg);
+                max-width: 600px;
+                width: 100%;
+                max-height: 80vh;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+            }}
+            .modal-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 20px 24px;
+                border-bottom: 1px solid var(--md-outline-variant);
+                background: var(--md-surface-variant);
+            }}
+            .modal-close {{
+                background: none;
+                border: none;
+                font-size: 28px;
+                cursor: pointer;
+                color: var(--md-on-surface-variant);
+                padding: 0;
+                line-height: 1;
+            }}
+            .modal-close:hover {{
+                color: var(--md-on-surface);
+            }}
+            .modal-body {{
+                padding: 24px;
+                overflow-y: auto;
+            }}
+
+            /* Modal Content Styles */
+            .detail-section {{
+                margin-bottom: 24px;
+            }}
+            .detail-section:last-child {{
+                margin-bottom: 0;
+            }}
+            .detail-section h3 {{
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--md-on-surface-variant);
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 12px;
+            }}
+            .detail-meta {{
+                display: grid;
+                grid-template-columns: repeat(2, 1fr);
+                gap: 12px;
+            }}
+            .detail-item {{
+                padding: 12px;
+                background: var(--md-surface-variant);
+                border-radius: var(--radius-md);
+            }}
+            .detail-item-label {{
+                font-size: 11px;
+                color: var(--md-on-surface-variant);
+                text-transform: uppercase;
+                margin-bottom: 4px;
+            }}
+            .detail-item-value {{
+                font-size: 16px;
+                font-weight: 500;
+                color: var(--md-on-surface);
+            }}
+            .phase-card {{
+                background: var(--md-surface-variant);
+                border-radius: var(--radius-md);
+                padding: 16px;
+                margin-bottom: 12px;
+            }}
+            .phase-card:last-child {{
+                margin-bottom: 0;
+            }}
+            .phase-name {{
+                font-weight: 600;
+                color: var(--md-on-surface);
+                margin-bottom: 8px;
+            }}
+            .exercise-item {{
+                padding: 8px 0;
+                border-bottom: 1px solid var(--md-outline-variant);
+            }}
+            .exercise-item:last-child {{
+                border-bottom: none;
+            }}
+            .exercise-name {{
+                font-weight: 500;
+                color: var(--md-on-surface);
+            }}
+            .exercise-details {{
+                font-size: 13px;
+                color: var(--md-on-surface-variant);
+                margin-top: 4px;
+            }}
+            .no-details {{
+                color: var(--md-on-surface-variant);
+                font-style: italic;
+            }}
+
             @media (max-width: 640px) {{
-                .day-header {{
-                    padding: 12px 16px;
+                .week-header {{
+                    flex-wrap: wrap;
+                    gap: 8px;
+                }}
+                .week-meta {{
+                    width: 100%;
+                    justify-content: space-between;
+                }}
+                .week-toggle {{
+                    position: absolute;
+                    right: 20px;
+                    top: 18px;
+                }}
+                .week-header {{
+                    position: relative;
+                    padding-right: 40px;
                 }}
                 .workout-item {{
                     padding: 10px 12px;
@@ -1228,7 +1435,131 @@ class handler(BaseHTTPRequestHandler):
                     height: 36px;
                     font-size: 18px;
                 }}
+                .modal-content {{
+                    max-height: 90vh;
+                }}
+                .detail-meta {{
+                    grid-template-columns: 1fr;
+                }}
             }}
         </style>
+
+        <script>
+            const workoutData = {json.dumps(workout_data_js)};
+
+            function toggleWeek(header) {{
+                const card = header.parentElement;
+                card.classList.toggle('collapsed');
+            }}
+
+            function showWorkoutDetails(workoutId) {{
+                const workout = workoutData[workoutId];
+                if (!workout) return;
+
+                document.getElementById('modal-title').textContent = workout.name || 'Workout Details';
+
+                let bodyHtml = `
+                    <div class="detail-section">
+                        <h3>Overview</h3>
+                        <div class="detail-meta">
+                            <div class="detail-item">
+                                <div class="detail-item-label">Date</div>
+                                <div class="detail-item-value">${{formatDate(workout.date)}}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-item-label">Week</div>
+                                <div class="detail-item-value">Week ${{workout.week}}${{workout.is_test_week ? ' (Test)' : ''}}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-item-label">Duration</div>
+                                <div class="detail-item-value">${{workout.duration ? workout.duration + ' min' : 'Not set'}}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="detail-item-label">Status</div>
+                                <div class="detail-item-value">${{capitalize(workout.status)}}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                // Add workout details if available
+                if (workout.details && workout.details.phases && workout.details.phases.length > 0) {{
+                    bodyHtml += `<div class="detail-section"><h3>Workout Structure</h3>`;
+
+                    workout.details.phases.forEach(phase => {{
+                        bodyHtml += `<div class="phase-card">
+                            <div class="phase-name">${{phase.name || 'Phase'}}</div>`;
+
+                        if (phase.exercises && phase.exercises.length > 0) {{
+                            phase.exercises.forEach(ex => {{
+                                let details = [];
+                                if (ex.sets) details.push(ex.sets + ' sets');
+                                if (ex.reps) details.push(ex.reps + ' reps');
+                                if (ex.duration) details.push(ex.duration);
+                                if (ex.distance) details.push(ex.distance);
+                                if (ex.intensity) details.push(ex.intensity);
+                                if (ex.rest) details.push('Rest: ' + ex.rest);
+
+                                bodyHtml += `<div class="exercise-item">
+                                    <div class="exercise-name">${{ex.name || ex.description || 'Exercise'}}</div>
+                                    ${{details.length > 0 ? `<div class="exercise-details">${{details.join(' · ')}}</div>` : ''}}
+                                    ${{ex.notes ? `<div class="exercise-details">${{ex.notes}}</div>` : ''}}
+                                </div>`;
+                            }});
+                        }}
+
+                        bodyHtml += `</div>`;
+                    }});
+
+                    bodyHtml += `</div>`;
+                }} else {{
+                    bodyHtml += `<div class="detail-section">
+                        <h3>Workout Structure</h3>
+                        <p class="no-details">Detailed workout structure not available. Check your Garmin device for the full workout.</p>
+                    </div>`;
+                }}
+
+                if (workout.notes) {{
+                    bodyHtml += `<div class="detail-section">
+                        <h3>Notes</h3>
+                        <p>${{workout.notes}}</p>
+                    </div>`;
+                }}
+
+                document.getElementById('modal-body').innerHTML = bodyHtml;
+                document.getElementById('workout-modal').classList.add('open');
+                document.body.style.overflow = 'hidden';
+            }}
+
+            function closeModal(event) {{
+                if (event && event.target !== event.currentTarget) return;
+                document.getElementById('workout-modal').classList.remove('open');
+                document.body.style.overflow = '';
+            }}
+
+            function formatDate(dateStr) {{
+                const d = new Date(dateStr + 'T00:00:00');
+                return d.toLocaleDateString('en-US', {{ weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }});
+            }}
+
+            function capitalize(str) {{
+                return str.charAt(0).toUpperCase() + str.slice(1);
+            }}
+
+            // Close modal on escape key
+            document.addEventListener('keydown', (e) => {{
+                if (e.key === 'Escape') closeModal();
+            }});
+
+            // Collapse future weeks by default (keep current and next week expanded)
+            document.addEventListener('DOMContentLoaded', () => {{
+                const weekCards = document.querySelectorAll('.week-card');
+                weekCards.forEach((card, index) => {{
+                    if (index > 1 && !card.classList.contains('current-week')) {{
+                        card.classList.add('collapsed');
+                    }}
+                }});
+            }});
+        </script>
         '''
         return wrap_page(content, "Upcoming Workouts", "/upcoming")
