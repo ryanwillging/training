@@ -951,6 +951,175 @@ class handler(BaseHTTPRequestHandler):
             "status": "initialized"
         }
 
+    def _get_workout_details(self, workout_type, week_number):
+        """Get workout details based on type and week from the training plan."""
+        # Swim A - Threshold/CSS Development
+        swim_a_main_sets = {
+            (1, 2): "10×100 @ steady (RPE 6-7), 15-20s rest",
+            (3, 4): "8×125 @ steady, 15-20s rest",
+            (5, 6): "6×150 @ steady, 20-25s rest",
+            (7, 8): "5×200 @ steady, 20-30s rest",
+            (9, 10): "12×100 @ CSS pace, 10-15s rest",
+            (11, 12): "8×150 @ CSS pace, 15-20s rest",
+            (13, 14): "6×200 @ CSS pace, 20s rest",
+            (15, 16): "4×300 @ slightly slower than CSS, 30s rest",
+            (17, 18): "3×(4×100 @ target 400 pace), 15-20s rest; 2 min between rounds",
+            (19, 20): "6×150 @ target 400 pace, 20-30s rest",
+            (21, 22): "3×300 @ target 400 pace, 30-45s rest",
+            (23, 23): "6×50 @ target 400 pace, generous rest",
+            (24, 24): "Light technique + 400 TT on Swim B day",
+        }
+
+        # Swim B - VO2 + 400-Specific
+        swim_b_main_sets = {
+            (1, 2): "12×50 @ moderate-hard (RPE 7), 20s rest",
+            (3, 4): "16×50 @ moderate-hard, 20s rest",
+            (5, 6): "8×75 @ moderate-hard, 25s rest",
+            (7, 8): "10×50 @ strong (RPE 8), 25s rest",
+            (9, 10): "20×25 @ hard (RPE 9), 10-20s rest",
+            (11, 12): "10×50 @ hard (RPE 8-9), 30-40s rest",
+            (13, 14): "5×100 @ hard (RPE 8-9), 45-60s rest",
+            (15, 16): "Broken 400: 4×100 @ target 400 pace, 20-30s rest",
+            (17, 18): "12×50 @ hard (RPE 8-9), 30-40s rest",
+            (19, 20): "8×75 @ hard, 45s rest",
+            (21, 22): "5×100 @ hard, 60s rest",
+            (23, 23): "8×25 fast-but-clean, lots of rest",
+            (24, 24): "400 TT (push)",
+        }
+
+        # VO2 Sessions
+        vo2_main_sets = {
+            (1, 4): "6×2 min @ hard (RPE 8), 2 min easy between",
+            (5, 8): "5×3 min @ hard, 2 min easy between",
+            (9, 12): "4×4 min @ hard, 2.5 min easy between",
+            (13, 16): "5×3 min @ hard, 90s easy between",
+            (17, 20): "6×2 min @ very hard (RPE 9), 2 min easy between",
+            (21, 23): "4×3 min @ hard, 2 min easy between",
+            (24, 24): "Light 20 min easy (taper)",
+        }
+
+        def get_main_set(sets_dict, week):
+            for (start, end), main_set in sets_dict.items():
+                if start <= week <= end:
+                    return main_set
+            return None
+
+        if workout_type == "swim_a":
+            main_set = get_main_set(swim_a_main_sets, week_number)
+            # Test week adjustment
+            if week_number in [2, 12, 24]:
+                main_set = "6×50 @ CSS/target 400 pace, 30-45s rest (Test week taper)"
+            return {
+                "warmup": [
+                    {"name": "Easy swim", "distance": "300 yards"},
+                    {"name": "Drill/swim by 25", "sets": "6×50", "rest": "15-20s", "notes": "Catch-up, fingertip drag, 6-kick switch"}
+                ],
+                "main": [
+                    {"name": "Main Set", "description": main_set}
+                ],
+                "cooldown": [
+                    {"name": "Easy swim", "distance": "200 yards"}
+                ]
+            }
+
+        elif workout_type == "swim_b":
+            main_set = get_main_set(swim_b_main_sets, week_number)
+            return {
+                "warmup": [
+                    {"name": "Easy swim", "distance": "300 yards"},
+                    {"name": "Build swims", "sets": "4×50", "rest": "15-20s", "notes": "Easy → moderate"},
+                    {"name": "Fast-but-clean", "sets": "4×25", "rest": "30-45s", "notes": "Crisp speed, good form"}
+                ],
+                "main": [
+                    {"name": "Main Set", "description": main_set}
+                ],
+                "cooldown": [
+                    {"name": "Easy swim", "distance": "200 yards"}
+                ]
+            }
+
+        elif workout_type == "swim_test":
+            return {
+                "warmup": [
+                    {"name": "Easy swim", "distance": "300 yards"},
+                    {"name": "Build swims", "sets": "4×50", "rest": "20s", "notes": "Easy → moderate"},
+                    {"name": "Fast-but-clean", "sets": "4×25", "rest": "40-60s"},
+                    {"name": "Easy swim", "sets": "2×25"},
+                    {"name": "Rest before TT", "duration": "2-3 minutes"}
+                ],
+                "main": [
+                    {"name": "400y Freestyle Time Trial", "description": "From a push start", "notes": "Pacing: controlled first 100, build through 200-300, hold form 300-400"}
+                ],
+                "cooldown": [
+                    {"name": "Easy cool-down", "distance": "200-400 yards"},
+                    {"name": "Optional drill/swim", "sets": "4×50", "notes": "Very easy if feeling tight"}
+                ]
+            }
+
+        elif workout_type == "lift_a":
+            return {
+                "warmup": [
+                    {"name": "Foam roll", "duration": "5-8 min", "notes": "Quads, glutes, hip flexors"},
+                    {"name": "Dynamic stretches", "notes": "Leg swings, walking lunges, hip circles"},
+                    {"name": "Bodyweight squats", "sets": "2×10"}
+                ],
+                "main": [
+                    {"name": "Squats or Goblet Squats", "sets": "3×8-10", "notes": "Moderate weight"},
+                    {"name": "Romanian Deadlifts", "sets": "3×10-12"},
+                    {"name": "Bulgarian Split Squats", "sets": "2×8", "notes": "Each leg"},
+                    {"name": "Box Jumps or Broad Jumps", "sets": "3×5", "notes": "Power focus, full recovery"},
+                    {"name": "Single-Leg Balance", "sets": "2×30s", "notes": "Each leg, BOSU or unstable surface"}
+                ],
+                "finisher": [
+                    {"name": "Farmers Carry", "sets": "2×40 yards"}
+                ],
+                "cooldown": [
+                    {"name": "Hip flexor stretch", "duration": "2 min each side"},
+                    {"name": "Pigeon pose", "duration": "2 min each side"}
+                ]
+            }
+
+        elif workout_type == "lift_b":
+            return {
+                "warmup": [
+                    {"name": "Arm circles, band pull-aparts, cat-cow", "duration": "5-8 min"},
+                    {"name": "Push-ups", "sets": "2×10"}
+                ],
+                "main": [
+                    {"name": "Bench Press or Push-ups", "sets": "3×8-10"},
+                    {"name": "Bent-Over Rows", "sets": "3×10-12"},
+                    {"name": "Overhead Press", "sets": "3×8-10"},
+                    {"name": "Pull-ups or Lat Pulldowns", "sets": "3×8-10"},
+                    {"name": "Pallof Press", "sets": "2×12", "notes": "Each side, anti-rotation"},
+                    {"name": "Med Ball Rotational Throws", "sets": "2×8", "notes": "Each side"}
+                ],
+                "finisher": [
+                    {"name": "Suitcase Carry", "sets": "2×40 yards", "notes": "Each hand"}
+                ],
+                "cooldown": [
+                    {"name": "Thoracic spine rotation"},
+                    {"name": "Doorway chest stretch"}
+                ]
+            }
+
+        elif workout_type == "vo2":
+            main_set = get_main_set(vo2_main_sets, week_number)
+            return {
+                "warmup": [
+                    {"name": "Easy jog/row/spin", "duration": "8-10 min"},
+                    {"name": "Dynamic stretches"},
+                    {"name": "Strides or pickups", "sets": "3-4×15-20s"}
+                ],
+                "main": [
+                    {"name": "Intervals", "description": main_set}
+                ],
+                "cooldown": [
+                    {"name": "Easy + stretching", "duration": "5 min"}
+                ]
+            }
+
+        return None
+
     def _generate_upcoming_page(self, db):
         """Generate the upcoming workouts HTML page with all future workouts."""
         from database.models import Athlete, ScheduledWorkout
@@ -979,7 +1148,7 @@ class handler(BaseHTTPRequestHandler):
         workout_styles = {
             "swim_a": {"icon": "🏊", "label": "Swim A", "color": "#1976d2"},
             "swim_b": {"icon": "🏊", "label": "Swim B", "color": "#1565c0"},
-            "swim_test": {"icon": "🏊‍♂️", "label": "Swim Test", "color": "#0d47a1"},
+            "swim_test": {"icon": "🏊‍♂️", "label": "400 TT Test", "color": "#0d47a1"},
             "lift_a": {"icon": "🏋️", "label": "Lift A (Lower)", "color": "#388e3c"},
             "lift_b": {"icon": "🏋️", "label": "Lift B (Upper)", "color": "#2e7d32"},
             "vo2": {"icon": "🫀", "label": "VO2 Session", "color": "#d32f2f"},
@@ -1001,23 +1170,6 @@ class handler(BaseHTTPRequestHandler):
             '''
             return wrap_page(content, "Upcoming Workouts", "/upcoming")
 
-        # Build workout data for JavaScript
-        workout_data_js = {}
-        for w in workouts:
-            workout_details = json.loads(w.workout_data_json) if w.workout_data_json else {}
-            workout_data_js[w.id] = {
-                "id": w.id,
-                "name": w.workout_name,
-                "type": w.workout_type,
-                "date": str(w.scheduled_date),
-                "week": w.week_number,
-                "duration": w.duration_minutes,
-                "is_test_week": w.is_test_week,
-                "status": w.status,
-                "details": workout_details,
-                "notes": w.notes
-            }
-
         # Build week cards
         weeks_html = ""
         test_weeks = [2, 12, 24]
@@ -1035,7 +1187,7 @@ class handler(BaseHTTPRequestHandler):
             is_current = any(w.scheduled_date == today for w in week_workouts) or (week_start <= today <= week_end)
             week_class = "current-week" if is_current else ""
 
-            # Build workout items
+            # Build workout items with inline expandable details
             items_html = ""
             for w in sorted(week_workouts, key=lambda x: x.scheduled_date):
                 style = workout_styles.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
@@ -1054,21 +1206,61 @@ class handler(BaseHTTPRequestHandler):
 
                 duration_text = f"{w.duration_minutes} min" if w.duration_minutes else ""
 
+                # Get workout details from training plan
+                workout_details = self._get_workout_details(w.workout_type, w.week_number)
+
+                # Build details HTML
+                details_html = ""
+                if workout_details:
+                    for phase_name, exercises in workout_details.items():
+                        phase_label = phase_name.replace("_", " ").title()
+                        details_html += f'<div class="phase-section"><div class="phase-label">{phase_label}</div>'
+                        for ex in exercises:
+                            ex_name = ex.get("name", "")
+                            ex_parts = []
+                            if ex.get("sets"):
+                                ex_parts.append(ex["sets"])
+                            if ex.get("distance"):
+                                ex_parts.append(ex["distance"])
+                            if ex.get("duration"):
+                                ex_parts.append(ex["duration"])
+                            if ex.get("description"):
+                                ex_parts.append(ex["description"])
+                            if ex.get("rest"):
+                                ex_parts.append(f"Rest: {ex['rest']}")
+
+                            ex_info = " · ".join(ex_parts) if ex_parts else ""
+                            ex_notes = ex.get("notes", "")
+
+                            details_html += f'''
+                            <div class="exercise-row">
+                                <span class="exercise-name">{ex_name}</span>
+                                {f'<span class="exercise-info">{ex_info}</span>' if ex_info else ''}
+                                {f'<span class="exercise-notes">{ex_notes}</span>' if ex_notes else ''}
+                            </div>
+                            '''
+                        details_html += '</div>'
+
                 items_html += f'''
-                <div class="workout-item {today_class}" style="border-left-color: {style["color"]};" onclick="showWorkoutDetails({w.id})" data-workout-id="{w.id}">
-                    <div class="workout-icon" style="background: {style["color"]}20; color: {style["color"]};">
-                        {style["icon"]}
-                    </div>
-                    <div class="workout-info">
-                        <div class="workout-title">{w.workout_name or style["label"]}</div>
-                        <div class="workout-meta">
-                            <span class="workout-day">{day_label}</span>
-                            {f'<span class="workout-duration">{duration_text}</span>' if duration_text else ''}
+                <div class="workout-card {today_class}" data-workout-id="{w.id}">
+                    <div class="workout-header" onclick="toggleWorkout(this)" style="border-left-color: {style["color"]};">
+                        <div class="workout-icon" style="background: {style["color"]}20; color: {style["color"]};">
+                            {style["icon"]}
+                        </div>
+                        <div class="workout-info">
+                            <div class="workout-title">{w.workout_name or style["label"]}</div>
+                            <div class="workout-meta">
+                                <span class="workout-day">{day_label}</span>
+                                {f'<span class="workout-duration">{duration_text}</span>' if duration_text else ''}
+                            </div>
+                        </div>
+                        <div class="workout-actions">
+                            {status_badge}
+                            <span class="workout-chevron">▼</span>
                         </div>
                     </div>
-                    <div class="workout-actions">
-                        {status_badge}
-                        <span class="workout-chevron">›</span>
+                    <div class="workout-details">
+                        {details_html if details_html else '<p class="no-details">No detailed workout structure available.</p>'}
                     </div>
                 </div>
                 '''
@@ -1108,19 +1300,6 @@ class handler(BaseHTTPRequestHandler):
 
         <div class="upcoming-grid">
             {weeks_html}
-        </div>
-
-        <!-- Workout Details Modal -->
-        <div id="workout-modal" class="modal-overlay" onclick="closeModal(event)">
-            <div class="modal-content" onclick="event.stopPropagation()">
-                <div class="modal-header">
-                    <h2 id="modal-title" class="md-title-large">Workout Details</h2>
-                    <button class="modal-close" onclick="closeModal()">&times;</button>
-                </div>
-                <div id="modal-body" class="modal-body">
-                    <!-- Content populated by JS -->
-                </div>
-            </div>
         </div>
 
         <style>
@@ -1196,32 +1375,33 @@ class handler(BaseHTTPRequestHandler):
                 display: none;
             }}
 
-            /* Workout Items */
+            /* Workout Cards */
             .week-workouts {{
                 padding: 12px;
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
             }}
-            .workout-item {{
+            .workout-card {{
+                background: var(--md-surface);
+                border-radius: var(--radius-md);
+                overflow: hidden;
+            }}
+            .workout-card.is-today {{
+                box-shadow: 0 0 0 2px var(--md-primary);
+            }}
+            .workout-header {{
                 display: flex;
                 align-items: center;
                 gap: 12px;
                 padding: 12px 16px;
                 background: var(--md-surface-variant);
-                border-radius: var(--radius-md);
                 border-left: 4px solid;
                 cursor: pointer;
-                transition: background 0.15s, transform 0.1s;
+                transition: background 0.15s;
             }}
-            .workout-item:hover {{
+            .workout-header:hover {{
                 background: #e0e0e0;
-            }}
-            .workout-item:active {{
-                transform: scale(0.99);
-            }}
-            .workout-item.is-today {{
-                background: rgba(25, 118, 210, 0.1);
             }}
             .workout-icon {{
                 width: 40px;
@@ -1263,9 +1443,12 @@ class handler(BaseHTTPRequestHandler):
                 flex-shrink: 0;
             }}
             .workout-chevron {{
-                font-size: 20px;
+                font-size: 12px;
                 color: var(--md-on-surface-variant);
-                font-weight: 300;
+                transition: transform 0.2s;
+            }}
+            .workout-card.collapsed .workout-chevron {{
+                transform: rotate(-90deg);
             }}
             .workout-status {{
                 font-size: 11px;
@@ -1286,127 +1469,60 @@ class handler(BaseHTTPRequestHandler):
                 color: #1565c0;
             }}
 
-            /* Modal */
-            .modal-overlay {{
+            /* Workout Details (Expandable) */
+            .workout-details {{
+                padding: 16px 20px;
+                background: #fafafa;
+                border-top: 1px solid var(--md-outline-variant);
+            }}
+            .workout-card.collapsed .workout-details {{
                 display: none;
-                position: fixed;
-                top: 0;
-                left: 0;
-                right: 0;
-                bottom: 0;
-                background: rgba(0,0,0,0.5);
-                z-index: 1000;
-                align-items: center;
-                justify-content: center;
-                padding: 20px;
             }}
-            .modal-overlay.open {{
-                display: flex;
+            .phase-section {{
+                margin-bottom: 16px;
             }}
-            .modal-content {{
-                background: var(--md-surface);
-                border-radius: var(--radius-lg);
-                max-width: 600px;
-                width: 100%;
-                max-height: 80vh;
-                overflow: hidden;
-                display: flex;
-                flex-direction: column;
-            }}
-            .modal-header {{
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 20px 24px;
-                border-bottom: 1px solid var(--md-outline-variant);
-                background: var(--md-surface-variant);
-            }}
-            .modal-close {{
-                background: none;
-                border: none;
-                font-size: 28px;
-                cursor: pointer;
-                color: var(--md-on-surface-variant);
-                padding: 0;
-                line-height: 1;
-            }}
-            .modal-close:hover {{
-                color: var(--md-on-surface);
-            }}
-            .modal-body {{
-                padding: 24px;
-                overflow-y: auto;
-            }}
-
-            /* Modal Content Styles */
-            .detail-section {{
-                margin-bottom: 24px;
-            }}
-            .detail-section:last-child {{
+            .phase-section:last-child {{
                 margin-bottom: 0;
             }}
-            .detail-section h3 {{
-                font-size: 14px;
+            .phase-label {{
+                font-size: 11px;
                 font-weight: 600;
-                color: var(--md-on-surface-variant);
+                color: var(--md-primary);
                 text-transform: uppercase;
                 letter-spacing: 0.5px;
-                margin-bottom: 12px;
-            }}
-            .detail-meta {{
-                display: grid;
-                grid-template-columns: repeat(2, 1fr);
-                gap: 12px;
-            }}
-            .detail-item {{
-                padding: 12px;
-                background: var(--md-surface-variant);
-                border-radius: var(--radius-md);
-            }}
-            .detail-item-label {{
-                font-size: 11px;
-                color: var(--md-on-surface-variant);
-                text-transform: uppercase;
-                margin-bottom: 4px;
-            }}
-            .detail-item-value {{
-                font-size: 16px;
-                font-weight: 500;
-                color: var(--md-on-surface);
-            }}
-            .phase-card {{
-                background: var(--md-surface-variant);
-                border-radius: var(--radius-md);
-                padding: 16px;
-                margin-bottom: 12px;
-            }}
-            .phase-card:last-child {{
-                margin-bottom: 0;
-            }}
-            .phase-name {{
-                font-weight: 600;
-                color: var(--md-on-surface);
                 margin-bottom: 8px;
-            }}
-            .exercise-item {{
-                padding: 8px 0;
+                padding-bottom: 4px;
                 border-bottom: 1px solid var(--md-outline-variant);
             }}
-            .exercise-item:last-child {{
+            .exercise-row {{
+                padding: 8px 0;
+                border-bottom: 1px solid #eee;
+            }}
+            .exercise-row:last-child {{
                 border-bottom: none;
             }}
             .exercise-name {{
                 font-weight: 500;
                 color: var(--md-on-surface);
+                display: block;
             }}
-            .exercise-details {{
+            .exercise-info {{
                 font-size: 13px;
                 color: var(--md-on-surface-variant);
-                margin-top: 4px;
+                display: block;
+                margin-top: 2px;
+            }}
+            .exercise-notes {{
+                font-size: 12px;
+                color: #666;
+                font-style: italic;
+                display: block;
+                margin-top: 2px;
             }}
             .no-details {{
                 color: var(--md-on-surface-variant);
                 font-style: italic;
+                margin: 0;
             }}
 
             @media (max-width: 640px) {{
@@ -1427,7 +1543,7 @@ class handler(BaseHTTPRequestHandler):
                     position: relative;
                     padding-right: 40px;
                 }}
-                .workout-item {{
+                .workout-header {{
                     padding: 10px 12px;
                 }}
                 .workout-icon {{
@@ -1435,129 +1551,38 @@ class handler(BaseHTTPRequestHandler):
                     height: 36px;
                     font-size: 18px;
                 }}
-                .modal-content {{
-                    max-height: 90vh;
-                }}
-                .detail-meta {{
-                    grid-template-columns: 1fr;
+                .workout-details {{
+                    padding: 12px 16px;
                 }}
             }}
         </style>
 
         <script>
-            const workoutData = {json.dumps(workout_data_js)};
-
             function toggleWeek(header) {{
                 const card = header.parentElement;
                 card.classList.toggle('collapsed');
             }}
 
-            function showWorkoutDetails(workoutId) {{
-                const workout = workoutData[workoutId];
-                if (!workout) return;
-
-                document.getElementById('modal-title').textContent = workout.name || 'Workout Details';
-
-                let bodyHtml = `
-                    <div class="detail-section">
-                        <h3>Overview</h3>
-                        <div class="detail-meta">
-                            <div class="detail-item">
-                                <div class="detail-item-label">Date</div>
-                                <div class="detail-item-value">${{formatDate(workout.date)}}</div>
-                            </div>
-                            <div class="detail-item">
-                                <div class="detail-item-label">Week</div>
-                                <div class="detail-item-value">Week ${{workout.week}}${{workout.is_test_week ? ' (Test)' : ''}}</div>
-                            </div>
-                            <div class="detail-item">
-                                <div class="detail-item-label">Duration</div>
-                                <div class="detail-item-value">${{workout.duration ? workout.duration + ' min' : 'Not set'}}</div>
-                            </div>
-                            <div class="detail-item">
-                                <div class="detail-item-label">Status</div>
-                                <div class="detail-item-value">${{capitalize(workout.status)}}</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-
-                // Add workout details if available
-                if (workout.details && workout.details.phases && workout.details.phases.length > 0) {{
-                    bodyHtml += `<div class="detail-section"><h3>Workout Structure</h3>`;
-
-                    workout.details.phases.forEach(phase => {{
-                        bodyHtml += `<div class="phase-card">
-                            <div class="phase-name">${{phase.name || 'Phase'}}</div>`;
-
-                        if (phase.exercises && phase.exercises.length > 0) {{
-                            phase.exercises.forEach(ex => {{
-                                let details = [];
-                                if (ex.sets) details.push(ex.sets + ' sets');
-                                if (ex.reps) details.push(ex.reps + ' reps');
-                                if (ex.duration) details.push(ex.duration);
-                                if (ex.distance) details.push(ex.distance);
-                                if (ex.intensity) details.push(ex.intensity);
-                                if (ex.rest) details.push('Rest: ' + ex.rest);
-
-                                bodyHtml += `<div class="exercise-item">
-                                    <div class="exercise-name">${{ex.name || ex.description || 'Exercise'}}</div>
-                                    ${{details.length > 0 ? `<div class="exercise-details">${{details.join(' · ')}}</div>` : ''}}
-                                    ${{ex.notes ? `<div class="exercise-details">${{ex.notes}}</div>` : ''}}
-                                </div>`;
-                            }});
-                        }}
-
-                        bodyHtml += `</div>`;
-                    }});
-
-                    bodyHtml += `</div>`;
-                }} else {{
-                    bodyHtml += `<div class="detail-section">
-                        <h3>Workout Structure</h3>
-                        <p class="no-details">Detailed workout structure not available. Check your Garmin device for the full workout.</p>
-                    </div>`;
-                }}
-
-                if (workout.notes) {{
-                    bodyHtml += `<div class="detail-section">
-                        <h3>Notes</h3>
-                        <p>${{workout.notes}}</p>
-                    </div>`;
-                }}
-
-                document.getElementById('modal-body').innerHTML = bodyHtml;
-                document.getElementById('workout-modal').classList.add('open');
-                document.body.style.overflow = 'hidden';
+            function toggleWorkout(header) {{
+                const card = header.parentElement;
+                card.classList.toggle('collapsed');
             }}
-
-            function closeModal(event) {{
-                if (event && event.target !== event.currentTarget) return;
-                document.getElementById('workout-modal').classList.remove('open');
-                document.body.style.overflow = '';
-            }}
-
-            function formatDate(dateStr) {{
-                const d = new Date(dateStr + 'T00:00:00');
-                return d.toLocaleDateString('en-US', {{ weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }});
-            }}
-
-            function capitalize(str) {{
-                return str.charAt(0).toUpperCase() + str.slice(1);
-            }}
-
-            // Close modal on escape key
-            document.addEventListener('keydown', (e) => {{
-                if (e.key === 'Escape') closeModal();
-            }});
 
             // Collapse future weeks by default (keep current and next week expanded)
+            // All workouts start collapsed
             document.addEventListener('DOMContentLoaded', () => {{
+                // Collapse weeks after the first 2
                 const weekCards = document.querySelectorAll('.week-card');
                 weekCards.forEach((card, index) => {{
                     if (index > 1 && !card.classList.contains('current-week')) {{
                         card.classList.add('collapsed');
                     }}
+                }});
+
+                // Collapse all workouts by default
+                const workoutCards = document.querySelectorAll('.workout-card');
+                workoutCards.forEach(card => {{
+                    card.classList.add('collapsed');
                 }});
             }});
         </script>
