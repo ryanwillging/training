@@ -61,8 +61,8 @@ class TestNavigationConsistency:
         """Current page should have active class in navigation."""
         page.goto(f"{base_url}{path}")
 
-        # Find the active link and verify it matches the current page
-        active_link = page.locator(".md-nav-link.active")
+        # Find the active link in desktop nav (not mobile menu)
+        active_link = page.locator(".md-nav-links .md-nav-link.active")
         expect(active_link).to_be_visible()
         expect(active_link).to_contain_text(name)
 
