@@ -11,7 +11,7 @@ venv/
 
 # Environment and secrets
 .env
-.env.local
+.env.*
 
 # Database files
 *.db
@@ -22,4 +22,3 @@ venv/
 # Garmin FIT outputs
 *.fit
 .vercel
-.env*.local
