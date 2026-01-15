@@ -8,6 +8,9 @@
 training/
 ├── api/                    # FastAPI application
 │   ├── app.py             # Main app entry point
+│   ├── index.py           # Vercel serverless handler
+│   ├── navigation.py      # Shared navigation component
+│   ├── dashboard.py       # Dashboard HTML generation
 │   ├── routes/            # API route handlers
 │   │   ├── reports.py     # Daily/weekly report endpoints
 │   │   └── import_routes.py
@@ -261,3 +264,30 @@ vercel logs
 - **Vercel**: Simple Python handler (serverless-compatible)
 - **Database**: PostgreSQL required for Vercel data persistence
 - **Reports**: Tufte-style HTML with inline SVG visualizations
+
+## Navigation System (`api/navigation.py`)
+All HTML pages share a consistent navigation bar. The navigation is centrally managed:
+
+### Adding New Pages
+To add a new HTML page to the navigation:
+1. Add the page to the `PAGES` list in `api/navigation.py`:
+   ```python
+   PAGES = [
+       {"path": "/dashboard", "name": "Dashboard", "icon": ""},
+       {"path": "/metrics", "name": "Metrics", "icon": ""},
+       {"path": "/api/reports/daily", "name": "Daily Report", "icon": ""},
+       {"path": "/api/reports/weekly", "name": "Weekly Report", "icon": ""},
+       # Add new pages here:
+       {"path": "/new-page", "name": "New Page", "icon": ""},
+   ]
+   ```
+2. In your route handler, wrap the HTML with navigation:
+   ```python
+   from api.navigation import wrap_page_with_nav
+   html = wrap_page_with_nav(html_content, "/new-page")
+   ```
+
+### Functions
+- `get_nav_html(current_path)` - Generate nav HTML, highlighting active page
+- `get_nav_css()` - Get CSS styles for the nav bar
+- `wrap_page_with_nav(html, path)` - Inject nav into existing HTML pages

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from database.base import get_db
 from database.models import Report, Athlete
 from analyst.report_generator import TrainingReportGenerator
+from api.navigation import wrap_page_with_nav
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 
@@ -80,7 +81,8 @@ def get_daily_report(
         ).first()
 
         if cached:
-            return HTMLResponse(content=cached.html_content)
+            html_with_nav = wrap_page_with_nav(cached.html_content, "/api/reports/daily")
+            return HTMLResponse(content=html_with_nav)
 
     # Generate new report
     try:
@@ -108,7 +110,8 @@ def get_daily_report(
 
         db.commit()
 
-        return HTMLResponse(content=html_content)
+        html_with_nav = wrap_page_with_nav(html_content, "/api/reports/daily")
+        return HTMLResponse(content=html_with_nav)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
@@ -162,7 +165,8 @@ def get_weekly_report(
         ).first()
 
         if cached:
-            return HTMLResponse(content=cached.html_content)
+            html_with_nav = wrap_page_with_nav(cached.html_content, "/api/reports/weekly")
+            return HTMLResponse(content=html_with_nav)
 
     # Generate new report
     try:
@@ -190,7 +194,8 @@ def get_weekly_report(
 
         db.commit()
 
-        return HTMLResponse(content=html_content)
+        html_with_nav = wrap_page_with_nav(html_content, "/api/reports/weekly")
+        return HTMLResponse(content=html_with_nav)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")

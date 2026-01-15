@@ -6,6 +6,8 @@ import os
 from urllib.parse import urlparse, parse_qs
 from datetime import date, datetime, timedelta
 
+from api.navigation import wrap_page_with_nav, get_nav_html, get_nav_css
+
 # Database imports
 DB_AVAILABLE = False
 try:
@@ -47,6 +49,7 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     from api.dashboard import generate_dashboard_html
                     html = generate_dashboard_html(db)
+                    html = wrap_page_with_nav(html, "/dashboard")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -60,6 +63,7 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     html = self._generate_metrics_form(db)
+                    html = wrap_page_with_nav(html, "/metrics")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -92,6 +96,7 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     html = self._generate_daily_report(db, report_date)
+                    html = wrap_page_with_nav(html, "/api/reports/daily")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -105,6 +110,7 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     html = self._generate_weekly_report(db)
+                    html = wrap_page_with_nav(html, "/api/reports/weekly")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -355,11 +361,14 @@ class handler(BaseHTTPRequestHandler):
         pass
 
     def _no_db_html(self, title):
+        nav_css = get_nav_css()
+        nav_html = get_nav_html()
         return f"""<!DOCTYPE html>
 <html><head><title>{title}</title>
 <style>body{{font-family:system-ui,sans-serif;max-width:600px;margin:40px auto;padding:20px;}}
-.notice{{background:#fef3c7;padding:20px;border-radius:8px;border-left:4px solid #d97706;}}</style></head>
-<body><h1>{title}</h1>
+.notice{{background:#fef3c7;padding:20px;border-radius:8px;border-left:4px solid #d97706;}}
+{nav_css}</style></head>
+<body>{nav_html}<h1>{title}</h1>
 <div class="notice"><strong>Database Not Configured</strong>
 <p>Set DATABASE_URL environment variable to enable this feature.</p></div></body></html>"""
 
@@ -400,9 +409,6 @@ class handler(BaseHTTPRequestHandler):
         }}
         h1 {{ margin-bottom: 8px; }}
         .subtitle {{ color: #666; margin-bottom: 24px; }}
-        .nav {{ margin-bottom: 20px; }}
-        .nav a {{ color: #2563eb; text-decoration: none; margin-right: 16px; }}
-        .nav a:hover {{ text-decoration: underline; }}
         .card {{
             background: white;
             border-radius: 12px;
@@ -452,11 +458,6 @@ class handler(BaseHTTPRequestHandler):
     </style>
 </head>
 <body>
-    <div class="nav">
-        <a href="/dashboard">← Dashboard</a>
-        <a href="/api/metrics/history">View All Metrics (JSON)</a>
-    </div>
-
     <h1>Record Metrics</h1>
     <p class="subtitle">Track your progress by recording baseline measurements</p>
 
@@ -592,12 +593,9 @@ class handler(BaseHTTPRequestHandler):
         .metrics {{ display: flex; gap: 32px; margin: 16px 0; }}
         .metric-value {{ font-size: 32px; font-weight: 300; }}
         .metric-label {{ font-size: 12px; color: #666; text-transform: uppercase; }}
-        .nav {{ margin-bottom: 16px; }}
-        .nav a {{ color: #2563eb; }}
     </style>
 </head>
 <body>
-    <div class="nav"><a href="/dashboard">← Dashboard</a></div>
     <h1>Training Report</h1>
     <p class="subtitle">{athlete_name} | {report_date.strftime('%A, %B %d, %Y')}</p>
 
@@ -708,15 +706,9 @@ class handler(BaseHTTPRequestHandler):
         .delta-down {{ color: #dc2626; }}
         table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
         th {{ text-align: left; padding: 8px; border-bottom: 2px solid #333; font-size: 12px; text-transform: uppercase; }}
-        .nav {{ margin-bottom: 16px; }}
-        .nav a {{ color: #2563eb; text-decoration: none; margin-right: 16px; }}
     </style>
 </head>
 <body>
-    <div class="nav">
-        <a href="/dashboard">← Dashboard</a>
-        <a href="/api/reports/daily">Daily Report</a>
-    </div>
     <h1>Weekly Training Summary</h1>
     <p class="subtitle">{athlete_name} | {week_start.strftime('%B %d')} - {week_end.strftime('%B %d, %Y')}</p>
 
