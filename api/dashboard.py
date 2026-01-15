@@ -212,24 +212,21 @@ def generate_dashboard_html(db):
         .calendar-day.selected {{ outline: 2px solid var(--md-primary); outline-offset: 1px; }}
         .calendar-day.l1 {{ background: #6fbf73; }}
         .calendar-day.l2 {{ background: #4caf50; }}
-        .calendar-day.l3 {{ background: #388e3c; }}
-        .calendar-day.l4 {{ background: #1b5e20; }}
-        .calendar-wrapper {{ display: flex; gap: 4px; }}
+        .calendar-day.l3 {{ background: #2e7d32; }}
+        .calendar-wrapper {{ display: flex; align-items: flex-start; }}
         .calendar-day-labels {{
             display: flex;
             flex-direction: column;
             gap: 3px;
             font-size: 10px;
             color: var(--md-on-surface-variant);
-            padding-top: 0;
-            width: 24px;
+            padding-right: 6px;
             flex-shrink: 0;
         }}
         .calendar-day-labels span {{
             height: 12px;
             line-height: 12px;
             text-align: right;
-            padding-right: 4px;
         }}
         .calendar-month-labels {{
             display: flex;
@@ -237,7 +234,7 @@ def generate_dashboard_html(db):
             font-size: 10px;
             color: var(--md-on-surface-variant);
             margin-bottom: 4px;
-            padding-left: 28px;
+            margin-left: 30px;
         }}
         .calendar-month-labels span {{
             width: 12px;
@@ -245,7 +242,7 @@ def generate_dashboard_html(db):
             white-space: nowrap;
             overflow: visible;
         }}
-        .calendar-legend {{ display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--md-on-surface-variant); margin-top: 8px; padding-left: 28px; }}
+        .calendar-legend {{ display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--md-on-surface-variant); margin-top: 8px; margin-left: 30px; }}
 
         /* Activity Details Panel */
         .activity-details {{
@@ -414,10 +411,8 @@ def _generate_calendar_heatmap(activity_by_date, min_date):
                     level = "l1"
                 elif count == 2:
                     level = "l2"
-                elif count == 3:
+                elif count >= 3:
                     level = "l3"
-                elif count >= 4:
-                    level = "l4"
 
                 date_str = current_date.strftime('%Y-%m-%d')
                 title = f"{current_date.strftime('%b %d, %Y')}: {count} workout{'s' if count != 1 else ''}"
@@ -535,16 +530,16 @@ def _generate_calendar_heatmap(activity_by_date, min_date):
     </script>
     """
 
-    # Day labels on the left (Sun, Mon, Tue, Wed, Thu, Fri, Sat)
+    # Day labels on the left - all 7 days aligned 1:1 with rows
     day_labels_html = '''
         <div class="calendar-day-labels">
             <span>Sun</span>
             <span>Mon</span>
-            <span></span>
+            <span>Tue</span>
             <span>Wed</span>
-            <span></span>
+            <span>Thu</span>
             <span>Fri</span>
-            <span></span>
+            <span>Sat</span>
         </div>
     '''
 
@@ -556,13 +551,14 @@ def _generate_calendar_heatmap(activity_by_date, min_date):
             <div class="calendar-grid">{"".join(weeks_html)}</div>
         </div>
         <div class="calendar-legend">
-            <span>Less</span>
+            <span>0</span>
             <div class="calendar-day"></div>
+            <span>1</span>
             <div class="calendar-day l1"></div>
+            <span>2</span>
             <div class="calendar-day l2"></div>
+            <span>3</span>
             <div class="calendar-day l3"></div>
-            <div class="calendar-day l4"></div>
-            <span>More</span>
         </div>
     </div>
     {js_code}
