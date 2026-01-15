@@ -1275,13 +1275,15 @@ class handler(BaseHTTPRequestHandler):
                 <div class="week-header" onclick="toggleWeek(this)">
                     <div class="week-title">
                         <span class="week-number">Week {week_num}</span>
-                        {test_badge}
                     </div>
                     <div class="week-meta">
                         <span class="week-dates">{week_start.strftime("%b %d")} - {week_end.strftime("%b %d")}</span>
                         <span class="week-progress">{progress_text}</span>
                     </div>
-                    <span class="week-toggle">▼</span>
+                    <div class="week-right">
+                        {test_badge}
+                        <span class="week-toggle">▶</span>
+                    </div>
                 </div>
                 <div class="week-workouts">
                     {items_html}
@@ -1339,11 +1341,17 @@ class handler(BaseHTTPRequestHandler):
                 display: flex;
                 align-items: center;
                 gap: 10px;
+                min-width: 80px;
             }}
             .week-number {{
                 font-size: 16px;
                 font-weight: 600;
                 color: var(--md-on-surface);
+            }}
+            .week-right {{
+                display: flex;
+                align-items: center;
+                gap: 12px;
             }}
             .test-week-badge {{
                 font-size: 10px;
@@ -1367,9 +1375,10 @@ class handler(BaseHTTPRequestHandler):
                 font-size: 12px;
                 color: var(--md-on-surface-variant);
                 transition: transform 0.2s;
+                transform: rotate(90deg);
             }}
             .week-card.collapsed .week-toggle {{
-                transform: rotate(-90deg);
+                transform: rotate(0deg);
             }}
             .week-card.collapsed .week-workouts {{
                 display: none;
@@ -1531,17 +1540,12 @@ class handler(BaseHTTPRequestHandler):
                     gap: 8px;
                 }}
                 .week-meta {{
-                    width: 100%;
-                    justify-content: space-between;
+                    flex: 1;
+                    justify-content: flex-start;
+                    gap: 12px;
                 }}
-                .week-toggle {{
-                    position: absolute;
-                    right: 20px;
-                    top: 18px;
-                }}
-                .week-header {{
-                    position: relative;
-                    padding-right: 40px;
+                .week-right {{
+                    flex-shrink: 0;
                 }}
                 .workout-header {{
                     padding: 10px 12px;
