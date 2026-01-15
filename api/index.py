@@ -1351,7 +1351,9 @@ class handler(BaseHTTPRequestHandler):
             .week-right {{
                 display: flex;
                 align-items: center;
+                justify-content: flex-end;
                 gap: 12px;
+                min-width: 100px;
             }}
             .test-week-badge {{
                 font-size: 10px;
@@ -1366,6 +1368,7 @@ class handler(BaseHTTPRequestHandler):
                 display: flex;
                 gap: 16px;
                 align-items: center;
+                flex: 1;
             }}
             .week-dates, .week-progress {{
                 font-size: 13px;
@@ -1539,13 +1542,8 @@ class handler(BaseHTTPRequestHandler):
                     flex-wrap: wrap;
                     gap: 8px;
                 }}
-                .week-meta {{
-                    flex: 1;
-                    justify-content: flex-start;
-                    gap: 12px;
-                }}
                 .week-right {{
-                    flex-shrink: 0;
+                    min-width: auto;
                 }}
                 .workout-header {{
                     padding: 10px 12px;
