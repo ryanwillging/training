@@ -210,9 +210,9 @@ def generate_dashboard_html(db):
         .calendar-day.has-activity {{ cursor: pointer; }}
         .calendar-day.has-activity:hover {{ transform: scale(1.3); }}
         .calendar-day.selected {{ outline: 2px solid var(--md-primary); outline-offset: 1px; }}
-        .calendar-day.l1 {{ background: #6fbf73; }}
+        .calendar-day.l1 {{ background: #a5d6a7; }}
         .calendar-day.l2 {{ background: #4caf50; }}
-        .calendar-day.l3 {{ background: #2e7d32; }}
+        .calendar-day.l3 {{ background: #1b5e20; }}
         .calendar-wrapper {{ display: flex; align-items: flex-start; }}
         .calendar-day-labels {{
             display: flex;
@@ -221,6 +221,7 @@ def generate_dashboard_html(db):
             font-size: 10px;
             color: var(--md-on-surface-variant);
             padding-right: 6px;
+            padding-top: 8px;
             flex-shrink: 0;
         }}
         .calendar-day-labels span {{
