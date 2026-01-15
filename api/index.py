@@ -6,7 +6,7 @@ import os
 from urllib.parse import urlparse, parse_qs
 from datetime import date, datetime, timedelta
 
-from api.navigation import wrap_page_with_nav, get_nav_html, get_nav_css
+from api.design_system import wrap_page, get_base_css, get_nav_css
 
 # Database imports
 DB_AVAILABLE = False
@@ -49,7 +49,6 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     from api.dashboard import generate_dashboard_html
                     html = generate_dashboard_html(db)
-                    html = wrap_page_with_nav(html, "/dashboard")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -63,7 +62,6 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     html = self._generate_metrics_form(db)
-                    html = wrap_page_with_nav(html, "/metrics")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -96,7 +94,6 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     html = self._generate_daily_report(db, report_date)
-                    html = wrap_page_with_nav(html, "/api/reports/daily")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -110,7 +107,6 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     html = self._generate_weekly_report(db)
-                    html = wrap_page_with_nav(html, "/api/reports/weekly")
                     db.close()
                     return self.send_html(html)
                 except Exception as e:
@@ -361,19 +357,21 @@ class handler(BaseHTTPRequestHandler):
         pass
 
     def _no_db_html(self, title):
-        nav_css = get_nav_css()
-        nav_html = get_nav_html()
-        return f"""<!DOCTYPE html>
-<html><head><title>{title}</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:600px;margin:40px auto;padding:20px;}}
-.notice{{background:#fef3c7;padding:20px;border-radius:8px;border-left:4px solid #d97706;}}
-{nav_css}</style></head>
-<body>{nav_html}<h1>{title}</h1>
-<div class="notice"><strong>Database Not Configured</strong>
-<p>Set DATABASE_URL environment variable to enable this feature.</p></div></body></html>"""
+        content = f'''
+        <header class="mb-6">
+            <h1 class="md-headline-large">{title}</h1>
+        </header>
+        <div class="md-alert md-alert-warning">
+            <div>
+                <strong class="md-title-medium">Database Not Configured</strong>
+                <p class="md-body-medium mt-2">Set DATABASE_URL environment variable to enable this feature.</p>
+            </div>
+        </div>
+        '''
+        return wrap_page(content, title, None)
 
     def _generate_metrics_form(self, db):
-        """Generate metrics input form."""
+        """Generate metrics input form using Material Design."""
         from database.models import ProgressMetric, Athlete
 
         athlete = db.query(Athlete).first()
@@ -384,177 +382,160 @@ class handler(BaseHTTPRequestHandler):
             ProgressMetric.metric_date.desc()
         ).limit(20).all()
 
-        recent_html = ""
+        recent_rows = ""
         if recent:
-            recent_html = "<h3>Recent Measurements</h3><table style='width:100%;border-collapse:collapse;'>"
-            recent_html += "<tr style='border-bottom:2px solid #333;'><th style='text-align:left;padding:8px;'>Date</th><th style='text-align:left;padding:8px;'>Metric</th><th style='text-align:right;padding:8px;'>Value</th></tr>"
             for m in recent:
-                recent_html += f"<tr style='border-bottom:1px solid #eee;'><td style='padding:8px;'>{m.metric_date}</td><td style='padding:8px;'>{m.metric_type}</td><td style='text-align:right;padding:8px;'>{m.value_numeric}</td></tr>"
-            recent_html += "</table>"
+                recent_rows += f'''
+                <tr>
+                    <td>{m.metric_date}</td>
+                    <td>{m.metric_type.replace('_', ' ').title()}</td>
+                    <td class="text-right">{m.value_numeric}</td>
+                </tr>
+                '''
 
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Record Metrics</title>
-    <style>
-        * {{ box-sizing: border-box; }}
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #fafafa;
-        }}
-        h1 {{ margin-bottom: 8px; }}
-        .subtitle {{ color: #666; margin-bottom: 24px; }}
-        .card {{
-            background: white;
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 20px;
-            border: 1px solid #e5e5e5;
-        }}
-        .card h2 {{ margin-top: 0; font-size: 18px; margin-bottom: 16px; }}
-        .form-group {{ margin-bottom: 16px; }}
-        label {{ display: block; font-weight: 500; margin-bottom: 4px; font-size: 14px; }}
-        .hint {{ font-size: 12px; color: #666; margin-top: 2px; }}
-        input[type="text"], input[type="number"], input[type="date"], select, textarea {{
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #d1d5db;
-            border-radius: 8px;
-            font-size: 16px;
-        }}
-        input:focus, select:focus, textarea:focus {{
-            outline: none;
-            border-color: #2563eb;
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }}
-        .grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }}
-        @media (max-width: 600px) {{ .grid {{ grid-template-columns: 1fr; }} }}
-        button {{
-            background: #2563eb;
-            color: white;
-            border: none;
-            padding: 12px 24px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: 500;
-            cursor: pointer;
-            width: 100%;
-        }}
-        button:hover {{ background: #1d4ed8; }}
-        .success {{
-            background: #d1fae5;
-            border: 1px solid #059669;
-            color: #065f46;
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }}
-        table {{ margin-top: 16px; font-size: 14px; }}
-    </style>
-</head>
-<body>
-    <h1>Record Metrics</h1>
-    <p class="subtitle">Track your progress by recording baseline measurements</p>
-
-    <form action="/api/metrics/save" method="POST">
-        <div class="card">
-            <h2>📅 Measurement Date</h2>
-            <div class="form-group">
-                <label for="date">Date</label>
-                <input type="date" id="date" name="date" value="{date.today()}" required>
+        recent_html = f'''
+        <div class="md-card mt-6">
+            <div class="md-card-header">
+                <h2 class="md-title-large">Recent Measurements</h2>
             </div>
-        </div>
-
-        <div class="card">
-            <h2>⚖️ Body Composition</h2>
-            <div class="grid">
-                <div class="form-group">
-                    <label for="weight">Weight (lbs)</label>
-                    <input type="number" id="weight" name="weight" step="0.1" placeholder="e.g., 175.5">
-                </div>
-                <div class="form-group">
-                    <label for="body_fat">Body Fat (%)</label>
-                    <input type="number" id="body_fat" name="body_fat" step="0.1" placeholder="e.g., 18.5">
-                    <div class="hint">Target: {goals.get('body_fat', {}).get('target', 14)}%</div>
+            <div class="md-card-content">
+                <div class="md-table-container">
+                    <table class="md-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Metric</th>
+                                <th class="text-right">Value</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {recent_rows if recent_rows else '<tr><td colspan="3" class="text-secondary">No measurements recorded yet</td></tr>'}
+                        </tbody>
+                    </table>
                 </div>
             </div>
         </div>
+        ''' if recent else ''
 
-        <div class="card">
-            <h2>❤️ Cardiovascular</h2>
-            <div class="grid">
-                <div class="form-group">
-                    <label for="vo2_max">VO2 Max (ml/kg/min)</label>
-                    <input type="number" id="vo2_max" name="vo2_max" step="0.1" placeholder="e.g., 45">
-                    <div class="hint">Target: {goals.get('vo2_max', {}).get('target', 55)}</div>
+        content = f'''
+        <header class="mb-6">
+            <h1 class="md-headline-large mb-2">Record Metrics</h1>
+            <p class="md-body-large text-secondary">Track your progress by recording baseline measurements</p>
+        </header>
+
+        <form action="/api/metrics/save" method="POST">
+            <div class="md-card mb-4">
+                <div class="md-card-header">
+                    <h2 class="md-title-large">Measurement Date</h2>
                 </div>
-                <div class="form-group">
-                    <label for="resting_hr">Resting Heart Rate (bpm)</label>
-                    <input type="number" id="resting_hr" name="resting_hr" placeholder="e.g., 58">
+                <div class="md-card-content">
+                    <div class="md-form-group">
+                        <label class="md-label" for="date">Date</label>
+                        <input class="md-input" type="date" id="date" name="date" value="{date.today()}" required>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <div class="card">
-            <h2>💪 Strength & Power</h2>
-            <div class="grid">
-                <div class="form-group">
-                    <label for="broad_jump">Broad Jump (inches)</label>
-                    <input type="number" id="broad_jump" name="broad_jump" step="0.5" placeholder="e.g., 102">
-                    <div class="hint">Target: {goals.get('explosive_strength', {}).get('metrics', {}).get('broad_jump', {}).get('target', 108)}"</div>
+            <div class="md-card mb-4">
+                <div class="md-card-header">
+                    <h2 class="md-title-large">Body Composition</h2>
                 </div>
-                <div class="form-group">
-                    <label for="box_jump">Box Jump (inches)</label>
-                    <input type="number" id="box_jump" name="box_jump" step="0.5" placeholder="e.g., 32">
-                    <div class="hint">Target: {goals.get('explosive_strength', {}).get('metrics', {}).get('box_jump', {}).get('target', 36)}"</div>
-                </div>
-                <div class="form-group">
-                    <label for="dead_hang">Dead Hang (seconds)</label>
-                    <input type="number" id="dead_hang" name="dead_hang" placeholder="e.g., 70">
-                </div>
-                <div class="form-group">
-                    <label for="pull_ups">Max Pull-ups (reps)</label>
-                    <input type="number" id="pull_ups" name="pull_ups" placeholder="e.g., 12">
+                <div class="md-card-content">
+                    <div class="md-grid md-grid-cols-2">
+                        <div class="md-form-group">
+                            <label class="md-label" for="weight">Weight (lbs)</label>
+                            <input class="md-input" type="number" id="weight" name="weight" step="0.1" placeholder="e.g., 175.5">
+                        </div>
+                        <div class="md-form-group">
+                            <label class="md-label" for="body_fat">Body Fat (%)</label>
+                            <input class="md-input" type="number" id="body_fat" name="body_fat" step="0.1" placeholder="e.g., 18.5">
+                            <p class="md-hint">Target: {goals.get('body_fat', {}).get('target', 14)}%</p>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <div class="card">
-            <h2>📝 Notes</h2>
-            <div class="form-group">
-                <label for="method">Measurement Method</label>
-                <select id="method" name="method">
-                    <option value="">Select method...</option>
-                    <option value="inbody_scale">InBody Scale</option>
-                    <option value="garmin_watch">Garmin Watch</option>
-                    <option value="manual">Manual Measurement</option>
-                    <option value="dexa">DEXA Scan</option>
-                    <option value="caliper">Caliper</option>
-                </select>
+            <div class="md-card mb-4">
+                <div class="md-card-header">
+                    <h2 class="md-title-large">Cardiovascular</h2>
+                </div>
+                <div class="md-card-content">
+                    <div class="md-grid md-grid-cols-2">
+                        <div class="md-form-group">
+                            <label class="md-label" for="vo2_max">VO2 Max (ml/kg/min)</label>
+                            <input class="md-input" type="number" id="vo2_max" name="vo2_max" step="0.1" placeholder="e.g., 45">
+                            <p class="md-hint">Target: {goals.get('vo2_max', {}).get('target', 55)}</p>
+                        </div>
+                        <div class="md-form-group">
+                            <label class="md-label" for="resting_hr">Resting Heart Rate (bpm)</label>
+                            <input class="md-input" type="number" id="resting_hr" name="resting_hr" placeholder="e.g., 58">
+                        </div>
+                    </div>
+                </div>
             </div>
-            <div class="form-group">
-                <label for="notes">Additional Notes</label>
-                <textarea id="notes" name="notes" rows="3" placeholder="Any additional context..."></textarea>
+
+            <div class="md-card mb-4">
+                <div class="md-card-header">
+                    <h2 class="md-title-large">Strength & Power</h2>
+                </div>
+                <div class="md-card-content">
+                    <div class="md-grid md-grid-cols-2">
+                        <div class="md-form-group">
+                            <label class="md-label" for="broad_jump">Broad Jump (inches)</label>
+                            <input class="md-input" type="number" id="broad_jump" name="broad_jump" step="0.5" placeholder="e.g., 102">
+                            <p class="md-hint">Target: {goals.get('explosive_strength', {}).get('metrics', {}).get('broad_jump', {}).get('target', 108)}"</p>
+                        </div>
+                        <div class="md-form-group">
+                            <label class="md-label" for="box_jump">Box Jump (inches)</label>
+                            <input class="md-input" type="number" id="box_jump" name="box_jump" step="0.5" placeholder="e.g., 32">
+                            <p class="md-hint">Target: {goals.get('explosive_strength', {}).get('metrics', {}).get('box_jump', {}).get('target', 36)}"</p>
+                        </div>
+                        <div class="md-form-group">
+                            <label class="md-label" for="dead_hang">Dead Hang (seconds)</label>
+                            <input class="md-input" type="number" id="dead_hang" name="dead_hang" placeholder="e.g., 70">
+                        </div>
+                        <div class="md-form-group">
+                            <label class="md-label" for="pull_ups">Max Pull-ups (reps)</label>
+                            <input class="md-input" type="number" id="pull_ups" name="pull_ups" placeholder="e.g., 12">
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
 
-        <button type="submit">💾 Save Measurements</button>
-    </form>
+            <div class="md-card mb-4">
+                <div class="md-card-header">
+                    <h2 class="md-title-large">Notes</h2>
+                </div>
+                <div class="md-card-content">
+                    <div class="md-form-group">
+                        <label class="md-label" for="method">Measurement Method</label>
+                        <select class="md-select" id="method" name="method">
+                            <option value="">Select method...</option>
+                            <option value="inbody_scale">InBody Scale</option>
+                            <option value="garmin_watch">Garmin Watch</option>
+                            <option value="manual">Manual Measurement</option>
+                            <option value="dexa">DEXA Scan</option>
+                            <option value="caliper">Caliper</option>
+                        </select>
+                    </div>
+                    <div class="md-form-group">
+                        <label class="md-label" for="notes">Additional Notes</label>
+                        <textarea class="md-textarea" id="notes" name="notes" rows="3" placeholder="Any additional context..."></textarea>
+                    </div>
+                </div>
+            </div>
 
-    <div class="card" style="margin-top: 24px;">
+            <button type="submit" class="md-btn md-btn-filled w-full">Save Measurements</button>
+        </form>
+
         {recent_html}
-    </div>
-</body>
-</html>"""
+        '''
+        return wrap_page(content, "Record Metrics", "/metrics")
 
     def _generate_daily_report(self, db, report_date):
-        """Generate daily training report."""
+        """Generate daily training report using Material Design."""
         from database.models import CompletedActivity, Athlete
+        from api.design_system import get_stat_card
 
         athlete = db.query(Athlete).first()
         athlete_name = athlete.name if athlete else "Athlete"
@@ -573,42 +554,50 @@ class handler(BaseHTTPRequestHandler):
         total_minutes = sum(a.duration_minutes or 0 for a in week_activities)
 
         if today_activities:
-            today_html = "<ul>"
+            today_items = ""
             for a in today_activities:
-                today_html += f"<li><strong>{a.activity_name or a.activity_type}</strong> - {a.duration_minutes or '?'} min</li>"
-            today_html += "</ul>"
+                duration = f"{a.duration_minutes} min" if a.duration_minutes else ""
+                today_items += f'''
+                <div class="md-list-item">
+                    <div class="md-list-item-content">
+                        <div class="md-list-item-primary">{a.activity_name or a.activity_type}</div>
+                        <div class="md-list-item-secondary">{a.source or 'Unknown source'}</div>
+                    </div>
+                    <span class="md-chip">{duration}</span>
+                </div>
+                '''
+            today_html = f'<div class="md-list">{today_items}</div>'
         else:
-            today_html = "<p style='color:#666;'>Rest day</p>"
+            today_html = '<div class="md-alert md-alert-info"><p class="md-body-medium">Rest day - no activities recorded</p></div>'
 
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Daily Report - {report_date}</title>
-    <style>
-        body {{ font-family: Georgia, serif; max-width: 720px; margin: 0 auto; padding: 24px; }}
-        h1 {{ font-size: 24px; font-weight: 400; }}
-        .subtitle {{ color: #666; font-size: 14px; margin-bottom: 24px; }}
-        h2 {{ font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; }}
-        .metrics {{ display: flex; gap: 32px; margin: 16px 0; }}
-        .metric-value {{ font-size: 32px; font-weight: 300; }}
-        .metric-label {{ font-size: 12px; color: #666; text-transform: uppercase; }}
-    </style>
-</head>
-<body>
-    <h1>Training Report</h1>
-    <p class="subtitle">{athlete_name} | {report_date.strftime('%A, %B %d, %Y')}</p>
+        content = f'''
+        <header class="mb-6">
+            <h1 class="md-headline-large mb-2">Daily Training Report</h1>
+            <p class="md-body-large text-secondary">{athlete_name} &middot; {report_date.strftime('%A, %B %d, %Y')}</p>
+        </header>
 
-    <h2>Today</h2>
-    {today_html}
+        <div class="md-card mb-6">
+            <div class="md-card-header">
+                <h2 class="md-title-large">Today's Activity</h2>
+            </div>
+            <div class="md-card-content">
+                {today_html}
+            </div>
+        </div>
 
-    <h2>Week at a Glance</h2>
-    <div class="metrics">
-        <div><div class="metric-value">{total_workouts}</div><div class="metric-label">Workouts</div></div>
-        <div><div class="metric-value">{total_minutes}</div><div class="metric-label">Minutes</div></div>
-    </div>
-</body>
-</html>"""
+        <div class="md-card mb-6">
+            <div class="md-card-header">
+                <h2 class="md-title-large">Week at a Glance</h2>
+            </div>
+            <div class="md-card-content">
+                <div class="md-grid md-grid-cols-2">
+                    {get_stat_card(str(total_workouts), "Workouts")}
+                    {get_stat_card(f"{total_minutes}", "Minutes")}
+                </div>
+            </div>
+        </div>
+        '''
+        return wrap_page(content, f"Daily Report - {report_date}", "/api/reports/daily")
 
     def _get_stats(self, db):
         """Get training statistics."""
@@ -638,8 +627,9 @@ class handler(BaseHTTPRequestHandler):
         }
 
     def _generate_weekly_report(self, db):
-        """Generate weekly training summary report."""
+        """Generate weekly training summary report using Material Design."""
         from database.models import CompletedActivity, Athlete
+        from api.design_system import get_stat_card
 
         athlete = db.query(Athlete).first()
         athlete_name = athlete.name if athlete else "Athlete"
@@ -669,78 +659,67 @@ class handler(BaseHTTPRequestHandler):
         prev_workouts = len(prev_activities)
         prev_minutes = sum(a.duration_minutes or 0 for a in prev_activities)
 
-        # Build activity list HTML
+        # Build activity table rows
         activity_rows = ""
         for a in activities:
-            activity_rows += f"""<tr>
-                <td style="padding:8px;border-bottom:1px solid #eee;">{a.activity_date.strftime('%a %m/%d')}</td>
-                <td style="padding:8px;border-bottom:1px solid #eee;">{a.activity_name or a.activity_type}</td>
-                <td style="padding:8px;border-bottom:1px solid #eee;text-align:right;">{a.duration_minutes or '-'} min</td>
-            </tr>"""
+            activity_rows += f'''
+            <tr>
+                <td>{a.activity_date.strftime('%a %m/%d')}</td>
+                <td>{a.activity_name or a.activity_type}</td>
+                <td class="text-right">{a.duration_minutes or '-'} min</td>
+            </tr>
+            '''
 
         if not activity_rows:
-            activity_rows = "<tr><td colspan='3' style='padding:16px;color:#666;'>No activities recorded this week</td></tr>"
+            activity_rows = '<tr><td colspan="3" class="text-secondary">No activities recorded this week</td></tr>'
 
         # Week over week comparison
         workout_delta = total_workouts - prev_workouts
         minute_delta = total_minutes - prev_minutes
-        workout_arrow = "↑" if workout_delta > 0 else "↓" if workout_delta < 0 else "→"
-        minute_arrow = "↑" if minute_delta > 0 else "↓" if minute_delta < 0 else "→"
+        workout_change = f"+{workout_delta}" if workout_delta > 0 else str(workout_delta)
+        minute_change = f"+{minute_delta}" if minute_delta > 0 else str(minute_delta)
 
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Weekly Report - {week_start} to {week_end}</title>
-    <style>
-        body {{ font-family: Georgia, serif; max-width: 720px; margin: 0 auto; padding: 24px; }}
-        h1 {{ font-size: 24px; font-weight: 400; }}
-        .subtitle {{ color: #666; font-size: 14px; margin-bottom: 24px; }}
-        h2 {{ font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 8px; margin-top: 32px; }}
-        .metrics {{ display: flex; gap: 48px; margin: 16px 0; }}
-        .metric {{ }}
-        .metric-value {{ font-size: 36px; font-weight: 300; }}
-        .metric-label {{ font-size: 12px; color: #666; text-transform: uppercase; }}
-        .metric-delta {{ font-size: 14px; color: #666; }}
-        .delta-up {{ color: #059669; }}
-        .delta-down {{ color: #dc2626; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
-        th {{ text-align: left; padding: 8px; border-bottom: 2px solid #333; font-size: 12px; text-transform: uppercase; }}
-    </style>
-</head>
-<body>
-    <h1>Weekly Training Summary</h1>
-    <p class="subtitle">{athlete_name} | {week_start.strftime('%B %d')} - {week_end.strftime('%B %d, %Y')}</p>
+        content = f'''
+        <header class="mb-6">
+            <h1 class="md-headline-large mb-2">Weekly Training Summary</h1>
+            <p class="md-body-large text-secondary">{athlete_name} &middot; {week_start.strftime('%B %d')} - {week_end.strftime('%B %d, %Y')}</p>
+        </header>
 
-    <h2>Week Totals</h2>
-    <div class="metrics">
-        <div class="metric">
-            <div class="metric-value">{total_workouts}</div>
-            <div class="metric-label">Workouts</div>
-            <div class="metric-delta {'delta-up' if workout_delta > 0 else 'delta-down' if workout_delta < 0 else ''}">{workout_arrow} {abs(workout_delta)} vs last week</div>
+        <div class="md-card mb-6">
+            <div class="md-card-header">
+                <h2 class="md-title-large">Week Totals</h2>
+            </div>
+            <div class="md-card-content">
+                <div class="md-grid md-grid-cols-2">
+                    {get_stat_card(str(total_workouts), "Workouts", f"{workout_change} vs last week", workout_delta > 0 if workout_delta != 0 else None)}
+                    {get_stat_card(str(total_minutes), "Minutes", f"{minute_change} vs last week", minute_delta > 0 if minute_delta != 0 else None)}
+                </div>
+            </div>
         </div>
-        <div class="metric">
-            <div class="metric-value">{total_minutes}</div>
-            <div class="metric-label">Minutes</div>
-            <div class="metric-delta {'delta-up' if minute_delta > 0 else 'delta-down' if minute_delta < 0 else ''}">{minute_arrow} {abs(minute_delta)} vs last week</div>
-        </div>
-    </div>
 
-    <h2>Activity Log</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>Date</th>
-                <th>Activity</th>
-                <th style="text-align:right;">Duration</th>
-            </tr>
-        </thead>
-        <tbody>
-            {activity_rows}
-        </tbody>
-    </table>
-</body>
-</html>"""
+        <div class="md-card mb-6">
+            <div class="md-card-header">
+                <h2 class="md-title-large">Activity Log</h2>
+            </div>
+            <div class="md-card-content">
+                <div class="md-table-container">
+                    <table class="md-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Activity</th>
+                                <th class="text-right">Duration</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {activity_rows}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        '''
+        return wrap_page(content, f"Weekly Report", "/api/reports/weekly")
 
     def _get_report_list(self, db):
         """Get list of available reports."""

@@ -13,6 +13,7 @@ from database.base import get_db
 from database.models import Report, Athlete
 from analyst.report_generator import TrainingReportGenerator
 from api.navigation import wrap_page_with_nav
+from api.design_system import wrap_page
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 

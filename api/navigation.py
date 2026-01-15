@@ -15,82 +15,12 @@ PAGES: List[Dict[str, str]] = [
 ]
 
 
-def get_nav_css() -> str:
-    """Return CSS styles for the navigation bar."""
-    return """
-        .site-nav {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 12px 16px;
-            background: #1a1a1a;
-            margin: -20px -20px 20px -20px;
-            flex-wrap: wrap;
-        }
-        .site-nav-brand {
-            font-weight: 600;
-            color: #fff;
-            margin-right: 16px;
-            font-size: 14px;
-            text-decoration: none;
-        }
-        .site-nav a {
-            color: #a3a3a3;
-            text-decoration: none;
-            font-size: 13px;
-            padding: 6px 12px;
-            border-radius: 6px;
-            transition: background 0.15s, color 0.15s;
-        }
-        .site-nav a:hover {
-            background: #333;
-            color: #fff;
-        }
-        .site-nav a.active {
-            background: #2563eb;
-            color: #fff;
-        }
-        @media (max-width: 600px) {
-            .site-nav {
-                padding: 10px 12px;
-                gap: 4px;
-            }
-            .site-nav a {
-                font-size: 12px;
-                padding: 5px 8px;
-            }
-        }
-    """
-
-
-def get_nav_html(current_path: Optional[str] = None) -> str:
-    """
-    Generate navigation bar HTML.
-
-    Args:
-        current_path: The path of the current page to highlight as active
-
-    Returns:
-        HTML string for the navigation bar
-    """
-    links = []
-    for page in PAGES:
-        active_class = ' class="active"' if current_path == page["path"] else ""
-        icon = f'{page["icon"]} ' if page.get("icon") else ""
-        links.append(f'<a href="{page["path"]}"{active_class}>{icon}{page["name"]}</a>')
-
-    return f'''<nav class="site-nav">
-        <a href="/dashboard" class="site-nav-brand">Training</a>
-        {" ".join(links)}
-    </nav>'''
-
-
 def wrap_page_with_nav(html_content: str, current_path: Optional[str] = None) -> str:
     """
-    Wrap existing HTML content with navigation.
+    Wrap existing HTML content with Material Design navigation.
 
-    This is a convenience function for retrofitting navigation into existing pages.
-    It injects the nav CSS into the head and the nav HTML after the body tag.
+    DEPRECATED: For new pages, use design_system.wrap_page() instead.
+    This function is kept for backward compatibility with existing pages.
 
     Args:
         html_content: The existing HTML content
@@ -99,23 +29,81 @@ def wrap_page_with_nav(html_content: str, current_path: Optional[str] = None) ->
     Returns:
         HTML with navigation injected
     """
-    nav_css = get_nav_css()
-    nav_html = get_nav_html(current_path)
+    from api.design_system import get_base_css, get_nav_css
 
-    # Inject CSS before </style> or </head>
-    if "</style>" in html_content:
-        # Find the last </style> tag and inject before it
-        last_style_idx = html_content.rfind("</style>")
-        html_content = html_content[:last_style_idx] + nav_css + html_content[last_style_idx:]
-    elif "</head>" in html_content:
-        html_content = html_content.replace("</head>", f"<style>{nav_css}</style></head>")
+    base_css = get_base_css()
+    nav_css = get_nav_css()
+
+    # Build navigation links
+    nav_links = []
+    mobile_links = []
+    for page in PAGES:
+        active = ' active' if current_path == page['path'] else ''
+        nav_links.append(f'<a href="{page["path"]}" class="md-nav-link{active}">{page["name"]}</a>')
+        mobile_links.append(f'<a href="{page["path"]}" class="md-nav-link{active}">{page["name"]}</a>')
+
+    nav_html = f'''
+    <nav class="md-nav">
+        <div class="md-nav-container">
+            <a href="/dashboard" class="md-nav-brand">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/>
+                </svg>
+                Training
+            </a>
+            <div class="md-nav-links">
+                {' '.join(nav_links)}
+            </div>
+            <button class="md-nav-menu-btn" onclick="document.getElementById('mobile-menu').classList.toggle('open')" aria-label="Menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/>
+                </svg>
+            </button>
+        </div>
+        <div id="mobile-menu" class="md-nav-mobile">
+            {' '.join(mobile_links)}
+        </div>
+    </nav>
+    '''
+
+    # Inject base CSS and nav CSS
+    full_css = f"<style>{base_css}\n{nav_css}</style>"
+
+    # Inject CSS before </head>
+    if "</head>" in html_content:
+        html_content = html_content.replace("</head>", f"{full_css}</head>")
 
     # Inject nav after <body> or after <body ...>
     if "<body>" in html_content:
-        html_content = html_content.replace("<body>", f"<body>{nav_html}")
+        html_content = html_content.replace("<body>", f"<body>{nav_html}<div class='md-container'>")
+        html_content = html_content.replace("</body>", "</div></body>")
     elif "<body " in html_content:
-        # Handle <body class="..."> etc
         import re
-        html_content = re.sub(r'(<body[^>]*>)', rf'\1{nav_html}', html_content)
+        html_content = re.sub(r'(<body[^>]*>)', rf'\1{nav_html}<div class="md-container">', html_content)
+        html_content = html_content.replace("</body>", "</div></body>")
 
     return html_content
+
+
+# Keep these for backward compatibility
+def get_nav_css() -> str:
+    """Return CSS styles for the navigation bar. DEPRECATED: Use design_system instead."""
+    from api.design_system import get_nav_css as ds_nav_css
+    return ds_nav_css()
+
+
+def get_nav_html(current_path: Optional[str] = None) -> str:
+    """Generate navigation bar HTML. DEPRECATED: Use design_system.wrap_page instead."""
+    nav_links = []
+    for page in PAGES:
+        active = ' active' if current_path == page['path'] else ''
+        nav_links.append(f'<a href="{page["path"]}" class="md-nav-link{active}">{page["name"]}</a>')
+
+    return f'''
+    <nav class="md-nav">
+        <div class="md-nav-container">
+            <a href="/dashboard" class="md-nav-brand">Training</a>
+            <div class="md-nav-links">{' '.join(nav_links)}</div>
+        </div>
+    </nav>
+    '''
