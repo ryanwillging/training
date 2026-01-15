@@ -3,28 +3,58 @@
 ## Permission Mode
 --permission-mode=dontAsk
 
+## Requirements
+- **Python**: 3.9+
+- **Key Dependencies**: FastAPI, SQLAlchemy, garminconnect, playwright (for tests)
+
 ## Project Structure
 ```
 training/
 ├── api/                    # FastAPI application
 │   ├── app.py             # Main app entry point
 │   ├── index.py           # Vercel serverless handler
-│   ├── navigation.py      # Shared navigation component
+│   ├── navigation.py      # Shared navigation component (PAGES registry)
+│   ├── design_system.py   # Material Design CSS framework
 │   ├── dashboard.py       # Dashboard HTML generation
+│   ├── schemas.py         # Pydantic schemas for API
 │   ├── routes/            # API route handlers
+│   │   ├── __init__.py    # Exports all routers
 │   │   ├── reports.py     # Daily/weekly report endpoints
-│   │   └── import_routes.py
+│   │   ├── import_routes.py # Data import endpoints
+│   │   ├── metrics_routes.py # Metrics tracking endpoints
+│   │   └── plan.py        # Training plan endpoints
 │   └── cron/              # Cron job handlers
+│       └── sync.py        # Daily sync cron handler
 ├── analyst/               # Report generation & visualizations
 │   ├── report_generator.py
-│   └── visualizations.py
+│   ├── visualizations.py
+│   ├── goal_analyzer.py   # Goal progress analysis
+│   ├── plan_parser.py     # Parse training plan markdown
+│   ├── plan_manager.py    # Orchestrate plan components
+│   ├── workout_scheduler.py # Schedule workouts
+│   └── chatgpt_evaluator.py # AI plan evaluation
 ├── database/              # SQLAlchemy models & session
 │   ├── models.py          # Data models (Workout, Exercise, etc.)
 │   └── base.py           # Database connection setup
 ├── integrations/          # External API integrations
 │   ├── garmin/           # Garmin Connect client
+│   │   ├── client.py     # API wrapper
+│   │   ├── parsers.py    # Data transformation
+│   │   ├── wellness_importer.py # Wellness data sync
+│   │   ├── activity_importer.py # Activity sync
+│   │   └── workout_manager.py # Create/schedule workouts
 │   └── hevy/             # Hevy workout app client
-└── scripts/              # Utility scripts
+│       ├── client.py     # API wrapper
+│       └── activity_importer.py # Workout sync
+├── plans/                 # Training plan files
+│   └── base_training_plan.md # 24-week training plan
+├── scripts/              # Utility scripts
+│   └── setup_db.py       # Database initialization
+└── tests/                # Test suite
+    └── e2e/              # End-to-end tests (Playwright)
+        ├── conftest.py   # Pytest fixtures
+        ├── test_production.py # Production smoke tests
+        └── test_design_system.py # Design consistency tests
 ```
 
 ## Vercel Deployment
@@ -33,12 +63,40 @@ training/
 - **Status**: Deployed and operational
 - **Cron**: Daily sync at 5:00 UTC (midnight EST)
 
-## Available Endpoints (Vercel)
-- `/` - API info and status
+## API Endpoints
+
+### Core
+- `/` - API info and status (JSON)
 - `/health` - Health check with database status
+- `/dashboard` - Main dashboard (HTML)
+- `/metrics` - Metrics tracking page (HTML)
+
+### Reports
 - `/api/reports/daily` - Daily training report (HTML)
 - `/api/reports/weekly` - Weekly training report (HTML)
-- `/api/cron/sync` - Trigger data sync (POST)
+
+### Data Import
+- `/api/import/garmin/activities` - Import Garmin activities
+- `/api/import/hevy/workouts` - Import Hevy workouts
+- `/api/import/sync` - Full data sync (POST)
+
+### Metrics
+- `/api/metrics/body-composition` - Body composition data
+- `/api/metrics/performance-test` - Performance test results
+- `/api/metrics/subjective` - Subjective metrics
+- `/api/metrics/history/{metric_type}` - Metric history
+
+### Training Plan
+- `/api/plan/status` - Current plan status and progress
+- `/api/plan/initialize` - Initialize plan with start date (POST)
+- `/api/plan/week` - Current week summary
+- `/api/plan/week/{number}` - Specific week summary
+- `/api/plan/sync-garmin` - Sync workouts to Garmin (POST)
+- `/api/plan/evaluate` - Run AI evaluation (POST)
+- `/api/plan/upcoming` - Upcoming scheduled workouts
+
+### Cron
+- `/api/cron/sync` - Trigger data sync (POST, requires CRON_SECRET)
 - `/api/cron/sync/status` - Cron job status
 
 ## Deployment Status
@@ -127,15 +185,6 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
 - Supports: swim (A/B/test), lift (A/B), VO2 sessions
 - Schedules workouts on Garmin calendar
 
-### API Endpoints (Plan)
-- `/api/plan/status` - Current plan status and progress
-- `/api/plan/initialize` - Initialize plan with start date (POST)
-- `/api/plan/week` - Current week summary
-- `/api/plan/week/{number}` - Specific week summary
-- `/api/plan/sync-garmin` - Sync workouts to Garmin (POST)
-- `/api/plan/evaluate` - Run AI evaluation (POST)
-- `/api/plan/upcoming` - Upcoming scheduled workouts
-
 ### Nightly Cron Flow
 1. Sync Garmin activities and wellness data
 2. Sync Hevy workouts
@@ -156,6 +205,25 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
   - Fri: VO2 Session (Run/Row/Bike)
   - Sat: Lift B (Upper body)
   - Sun: REST
+
+## Local Development Setup
+```bash
+# Create virtual environment (first time only)
+python3.9 -m venv venv
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install playwright browsers (for E2E tests)
+playwright install
+
+# Copy environment template and configure
+cp .env.example .env
+# Edit .env with your credentials
+```
 
 ## Common Commands
 ```bash
@@ -282,6 +350,31 @@ All HTML pages use a consistent Material Design-inspired CSS framework:
    from api.design_system import wrap_page
    content = '<h1 class="md-headline-large">My Page</h1>...'
    html = wrap_page(content, "Page Title", "/my-page")
+   ```
+
+### Adding New API Routes
+1. Create a new router file in `api/routes/`:
+   ```python
+   # api/routes/my_feature.py
+   from fastapi import APIRouter
+
+   router = APIRouter(prefix="/my-feature", tags=["my-feature"])
+
+   @router.get("/")
+   def get_feature():
+       return {"status": "ok"}
+   ```
+
+2. Export from `api/routes/__init__.py`:
+   ```python
+   from api.routes.my_feature import router as my_feature_router
+   __all__ = [..., "my_feature_router"]
+   ```
+
+3. Include in `api/app.py`:
+   ```python
+   from api.routes import my_feature_router
+   app.include_router(my_feature_router, prefix="/api")
    ```
 
 ### CSS Classes
