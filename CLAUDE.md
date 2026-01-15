@@ -265,29 +265,35 @@ vercel logs
 - **Database**: PostgreSQL required for Vercel data persistence
 - **Reports**: Tufte-style HTML with inline SVG visualizations
 
-## Navigation System (`api/navigation.py`)
-All HTML pages share a consistent navigation bar. The navigation is centrally managed:
+## Design System (`api/design_system.py`)
+All HTML pages use a consistent Material Design-inspired CSS framework:
+
+### Features
+- **Typography**: Roboto font with Material Design 3 type scale
+- **Colors**: CSS custom properties (--md-primary, --md-surface, etc.)
+- **Components**: Cards, buttons, forms, tables, alerts, progress bars
+- **Responsive**: Mobile-first with breakpoints at 640px and 1024px
+- **Navigation**: Sticky nav bar with mobile hamburger menu
 
 ### Adding New Pages
-To add a new HTML page to the navigation:
-1. Add the page to the `PAGES` list in `api/navigation.py`:
+1. Add the page to `PAGES` list in `api/navigation.py`
+2. Use `wrap_page()` from design_system.py:
    ```python
-   PAGES = [
-       {"path": "/dashboard", "name": "Dashboard", "icon": ""},
-       {"path": "/metrics", "name": "Metrics", "icon": ""},
-       {"path": "/api/reports/daily", "name": "Daily Report", "icon": ""},
-       {"path": "/api/reports/weekly", "name": "Weekly Report", "icon": ""},
-       # Add new pages here:
-       {"path": "/new-page", "name": "New Page", "icon": ""},
-   ]
-   ```
-2. In your route handler, wrap the HTML with navigation:
-   ```python
-   from api.navigation import wrap_page_with_nav
-   html = wrap_page_with_nav(html_content, "/new-page")
+   from api.design_system import wrap_page
+   content = '<h1 class="md-headline-large">My Page</h1>...'
+   html = wrap_page(content, "Page Title", "/my-page")
    ```
 
-### Functions
-- `get_nav_html(current_path)` - Generate nav HTML, highlighting active page
-- `get_nav_css()` - Get CSS styles for the nav bar
-- `wrap_page_with_nav(html, path)` - Inject nav into existing HTML pages
+### CSS Classes
+- **Layout**: `.md-container`, `.md-grid`, `.md-grid-cols-2`
+- **Cards**: `.md-card`, `.md-card-header`, `.md-card-content`
+- **Typography**: `.md-headline-large`, `.md-title-medium`, `.md-body-large`
+- **Forms**: `.md-input`, `.md-select`, `.md-btn`, `.md-btn-filled`
+- **Tables**: `.md-table`, `.md-table-container`
+- **Utilities**: `.mb-4`, `.mt-6`, `.text-secondary`, `.md-flex`
+
+### Testing
+Design system tests verify consistency across all pages:
+```bash
+pytest tests/e2e/test_design_system.py -v
+```
