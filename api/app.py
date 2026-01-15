@@ -5,6 +5,7 @@ Main API server with routes for data import, metrics tracking, and daily reviews
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from garminconnect import Garmin
 import os
 from pathlib import Path
@@ -144,3 +145,9 @@ def health_check():
     """Health check endpoint."""
     db_status = "connected" if _db_initialized else "not_configured"
     return {"status": "healthy", "database": db_status}
+
+
+@app.get("/upcoming")
+async def upcoming_redirect():
+    """Redirect to upcoming workouts page."""
+    return RedirectResponse(url="/api/plan/upcoming-page", status_code=302)
