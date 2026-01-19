@@ -409,9 +409,6 @@ class handler(BaseHTTPRequestHandler):
 
     def _run_sync(self, db):
         """Run data sync from Garmin and Hevy."""
-        from database.base import Base, engine
-        from database.models import DailyWellness
-
         athlete_id = int(os.environ.get("ATHLETE_ID", "1"))
         days = 7  # Sync last 7 days
 
@@ -426,7 +423,9 @@ class handler(BaseHTTPRequestHandler):
 
         # Ensure all tables exist (creates daily_wellness if missing)
         try:
+            from database.base import Base, engine
             Base.metadata.create_all(bind=engine)
+            results["tables"] = "created/verified"
         except Exception as e:
             results["errors"].append(f"Table creation: {str(e)}")
 
