@@ -311,9 +311,34 @@ class TrainingPlanManager:
                         self._apply_modification(mod)
 
         except Exception as e:
-            results["errors"].append(f"Evaluation error: {str(e)}")
+            error_msg = f"Evaluation error: {str(e)}"
+            results["errors"].append(error_msg)
+
+            # Store a failed evaluation record so we have history
+            self._store_failed_evaluation(user_context, error_msg)
 
         return results
+
+    def _store_failed_evaluation(self, user_context: Optional[str], error_msg: str) -> None:
+        """Store a record of a failed evaluation attempt."""
+        try:
+            review = DailyReview(
+                athlete_id=self.athlete_id,
+                review_date=date.today(),
+                progress_summary=json.dumps({
+                    "overall_assessment": "error",
+                    "error": error_msg
+                }),
+                insights=f"Evaluation failed: {error_msg}",
+                proposed_adjustments=json.dumps([]),
+                approval_status="error",
+                user_context=user_context
+            )
+            self.db.add(review)
+            self.db.commit()
+        except Exception:
+            # If we can't store the error, just log it
+            pass
 
     def _get_recent_wellness(self, days: int) -> Dict[str, Any]:
         """Get averaged wellness data for the past N days."""

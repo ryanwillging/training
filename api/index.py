@@ -1916,6 +1916,7 @@ class handler(BaseHTTPRequestHandler):
             "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
             "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"},
             "no_changes_needed": {"bg": "#e3f2fd", "text": "#1565c0", "label": "No Changes Needed"},
+            "error": {"bg": "#fce4ec", "text": "#c62828", "label": "Evaluation Failed"},
         }
 
         assessment_colors = {
