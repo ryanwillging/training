@@ -12,10 +12,16 @@ from api.design_system import wrap_page, get_stat_card, get_progress_card
 
 def generate_dashboard_html(db):
     """Generate comprehensive fitness dashboard HTML with Material Design styling."""
-    from database.models import CompletedActivity, Athlete
+    from database.models import CompletedActivity, Athlete, DailyWellness
+    from datetime import date as date_type
 
     # Get athlete info
     athlete = db.query(Athlete).first()
+
+    # Get latest wellness data (today or most recent)
+    wellness = db.query(DailyWellness).order_by(
+        DailyWellness.date.desc()
+    ).first()
     athlete_name = athlete.name if athlete else "Athlete"
     goals = json.loads(athlete.goals) if athlete and athlete.goals else {}
 
@@ -82,6 +88,9 @@ def generate_dashboard_html(db):
         )
         weekly_hours.append((week_start, week_minutes / 60))
 
+    # Generate wellness metrics section
+    wellness_html = _generate_wellness_section(wellness)
+
     # Generate HTML sections
     calendar_html = _generate_calendar_heatmap(activity_by_date, min_date)
     goals_html = _generate_goals_section(goals, activities, weekly_hours)
@@ -106,6 +115,8 @@ def generate_dashboard_html(db):
         <h1 class="md-headline-large mb-2">Training Dashboard</h1>
         <p class="md-body-large text-secondary">{athlete_name} · Updated {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
     </header>
+
+    {wellness_html}
 
     {stat_cards}
 
@@ -564,6 +575,256 @@ def _generate_calendar_heatmap(activity_by_date, min_date):
     </div>
     {js_code}
     """
+
+
+def _generate_wellness_section(wellness):
+    """Generate Garmin-style wellness metrics section with circular gauges."""
+    if not wellness:
+        return '''
+        <div class="md-card mb-6">
+            <div class="md-card-content" style="text-align: center; padding: 24px;">
+                <p class="md-body-medium text-secondary">No wellness data available. Sync with Garmin to see your health metrics.</p>
+            </div>
+        </div>
+        '''
+
+    # Training Readiness
+    readiness_score = wellness.training_readiness_score or 0
+    readiness_status = wellness.training_readiness_status or "Unknown"
+    readiness_color = _get_score_color(readiness_score)
+
+    # Sleep
+    sleep_score = wellness.sleep_score or 0
+    sleep_hours = (wellness.sleep_duration_seconds or 0) / 3600
+    sleep_color = _get_score_color(sleep_score)
+
+    # Body Battery
+    bb_high = wellness.body_battery_high or 0
+    bb_low = wellness.body_battery_low or 0
+    bb_charged = wellness.body_battery_charged or 0
+    bb_color = _get_score_color(bb_high)
+
+    # Stress
+    stress_level = wellness.avg_stress_level or 0
+    stress_color = _get_stress_color(stress_level)
+
+    # Activity
+    steps = wellness.steps or 0
+    steps_goal = 10000  # Default goal
+    steps_pct = min((steps / steps_goal) * 100, 100)
+    active_cals = wellness.active_calories or 0
+    total_cals = wellness.total_calories or 0
+    floors = wellness.floors_climbed or 0
+
+    # Date for display
+    wellness_date = wellness.date.strftime('%A, %B %d') if wellness.date else "Today"
+
+    return f'''
+    <div class="wellness-metrics mb-6">
+        <div class="wellness-header">
+            <span class="wellness-date">{wellness_date}</span>
+        </div>
+        <div class="wellness-grid">
+            <!-- Training Readiness -->
+            <div class="wellness-card">
+                <div class="wellness-gauge">
+                    <svg viewBox="0 0 100 100" class="gauge-svg">
+                        <circle class="gauge-bg" cx="50" cy="50" r="42" />
+                        <circle class="gauge-fill" cx="50" cy="50" r="42"
+                            style="stroke: {readiness_color}; stroke-dasharray: {readiness_score * 2.64} 264;" />
+                    </svg>
+                    <div class="gauge-value">
+                        <span class="gauge-number">{readiness_score}</span>
+                    </div>
+                </div>
+                <div class="wellness-label">Training Readiness</div>
+                <div class="wellness-sublabel" style="color: {readiness_color};">{readiness_status.replace('_', ' ').title()}</div>
+            </div>
+
+            <!-- Daily Activity -->
+            <div class="wellness-card">
+                <div class="wellness-gauge">
+                    <svg viewBox="0 0 100 100" class="gauge-svg">
+                        <circle class="gauge-bg" cx="50" cy="50" r="42" />
+                        <circle class="gauge-fill" cx="50" cy="50" r="42"
+                            style="stroke: #00b0ff; stroke-dasharray: {steps_pct * 2.64} 264;" />
+                    </svg>
+                    <div class="gauge-value">
+                        <span class="gauge-number" style="font-size: 18px;">{steps:,}</span>
+                    </div>
+                </div>
+                <div class="wellness-label">Steps</div>
+                <div class="wellness-sublabel">{active_cals:,} active cal · {floors} floors</div>
+            </div>
+
+            <!-- Sleep -->
+            <div class="wellness-card">
+                <div class="wellness-gauge">
+                    <svg viewBox="0 0 100 100" class="gauge-svg">
+                        <circle class="gauge-bg" cx="50" cy="50" r="42" />
+                        <circle class="gauge-fill" cx="50" cy="50" r="42"
+                            style="stroke: {sleep_color}; stroke-dasharray: {sleep_score * 2.64} 264;" />
+                    </svg>
+                    <div class="gauge-value">
+                        <span class="gauge-number">{sleep_score}</span>
+                    </div>
+                </div>
+                <div class="wellness-label">Sleep Score</div>
+                <div class="wellness-sublabel">{sleep_hours:.1f} hours</div>
+            </div>
+
+            <!-- Body Battery -->
+            <div class="wellness-card">
+                <div class="wellness-gauge">
+                    <svg viewBox="0 0 100 100" class="gauge-svg">
+                        <circle class="gauge-bg" cx="50" cy="50" r="42" />
+                        <circle class="gauge-fill" cx="50" cy="50" r="42"
+                            style="stroke: {bb_color}; stroke-dasharray: {bb_high * 2.64} 264;" />
+                    </svg>
+                    <div class="gauge-value">
+                        <span class="gauge-number">{bb_high}</span>
+                    </div>
+                </div>
+                <div class="wellness-label">Body Battery</div>
+                <div class="wellness-sublabel">Low: {bb_low} · Charged: +{bb_charged}</div>
+            </div>
+
+            <!-- Stress -->
+            <div class="wellness-card">
+                <div class="wellness-gauge">
+                    <svg viewBox="0 0 100 100" class="gauge-svg">
+                        <circle class="gauge-bg" cx="50" cy="50" r="42" />
+                        <circle class="gauge-fill" cx="50" cy="50" r="42"
+                            style="stroke: {stress_color}; stroke-dasharray: {stress_level * 2.64} 264;" />
+                    </svg>
+                    <div class="gauge-value">
+                        <span class="gauge-number">{stress_level}</span>
+                    </div>
+                </div>
+                <div class="wellness-label">Stress</div>
+                <div class="wellness-sublabel">{_get_stress_label(stress_level)}</div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .wellness-metrics {{
+            background: var(--md-surface);
+            border-radius: var(--radius-lg);
+            padding: 20px;
+            border: 1px solid var(--md-outline-variant);
+        }}
+        .wellness-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }}
+        .wellness-date {{
+            font-size: 14px;
+            color: var(--md-on-surface-variant);
+        }}
+        .wellness-grid {{
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+        }}
+        @media (max-width: 900px) {{
+            .wellness-grid {{ grid-template-columns: repeat(3, 1fr); }}
+        }}
+        @media (max-width: 600px) {{
+            .wellness-grid {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
+        .wellness-card {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 12px 8px;
+        }}
+        .wellness-gauge {{
+            position: relative;
+            width: 80px;
+            height: 80px;
+            margin-bottom: 8px;
+        }}
+        .gauge-svg {{
+            transform: rotate(-90deg);
+        }}
+        .gauge-bg {{
+            fill: none;
+            stroke: var(--md-outline-variant);
+            stroke-width: 8;
+        }}
+        .gauge-fill {{
+            fill: none;
+            stroke-width: 8;
+            stroke-linecap: round;
+            transition: stroke-dasharray 0.5s ease;
+        }}
+        .gauge-value {{
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }}
+        .gauge-number {{
+            font-size: 22px;
+            font-weight: 600;
+            color: var(--md-on-surface);
+        }}
+        .wellness-label {{
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--md-on-surface);
+            text-align: center;
+        }}
+        .wellness-sublabel {{
+            font-size: 11px;
+            color: var(--md-on-surface-variant);
+            text-align: center;
+            margin-top: 2px;
+        }}
+    </style>
+    '''
+
+
+def _get_score_color(score):
+    """Get color based on 0-100 score (higher is better)."""
+    if score >= 80:
+        return "#4caf50"  # Green
+    elif score >= 60:
+        return "#8bc34a"  # Light green
+    elif score >= 40:
+        return "#ffc107"  # Amber
+    elif score >= 20:
+        return "#ff9800"  # Orange
+    else:
+        return "#f44336"  # Red
+
+
+def _get_stress_color(stress):
+    """Get color based on stress level (lower is better)."""
+    if stress <= 25:
+        return "#4caf50"  # Green - rest
+    elif stress <= 50:
+        return "#8bc34a"  # Light green - low
+    elif stress <= 75:
+        return "#ff9800"  # Orange - medium
+    else:
+        return "#f44336"  # Red - high
+
+
+def _get_stress_label(stress):
+    """Get text label for stress level."""
+    if stress <= 25:
+        return "Rest"
+    elif stress <= 50:
+        return "Low"
+    elif stress <= 75:
+        return "Medium"
+    else:
+        return "High"
 
 
 def _generate_goals_section(goals, activities, weekly_hours):
