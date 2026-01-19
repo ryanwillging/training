@@ -49,7 +49,8 @@ training/
 ├── plans/                 # Training plan files
 │   └── base_training_plan.md # 24-week training plan
 ├── scripts/              # Utility scripts
-│   └── setup_db.py       # Database initialization
+│   ├── setup_db.py       # Database initialization
+│   └── run_sync.py       # Local sync against production DB
 └── tests/                # Test suite
     └── e2e/              # End-to-end tests (Playwright)
         ├── conftest.py   # Pytest fixtures
@@ -79,6 +80,7 @@ training/
 - `/api/import/garmin/activities` - Import Garmin activities
 - `/api/import/hevy/workouts` - Import Hevy workouts
 - `/api/import/sync` - Full data sync (POST)
+- `/api/sync` - Dashboard sync trigger (POST, no auth - limited in Vercel)
 
 ### Metrics
 - `/api/metrics/body-composition` - Body composition data
@@ -240,8 +242,11 @@ curl https://training.ryanwillging.com/api/cron/sync/status
 # Local development server (for testing changes)
 source venv/bin/activate && uvicorn api.app:app --reload
 
-# Local data sync
+# Local data sync (via API)
 curl -X POST http://localhost:8000/api/import/sync
+
+# Run sync locally against production database (preferred method)
+source venv/bin/activate && python scripts/run_sync.py
 ```
 
 ## Git Workflow
@@ -318,6 +323,12 @@ All required variables are configured:
 - **Garmin auth fails**: Credentials may have expired or MFA triggered. Check `GARMIN_EMAIL`/`GARMIN_PASSWORD` in Vercel env vars
 - **Hevy sync empty**: Verify `HEVY_API_KEY` is valid. Test with: `curl -H "Authorization: Bearer $HEVY_API_KEY" https://api.hevyapp.com/v1/workouts`
 - **Database errors**: Locally uses SQLite (`training.db`). For Vercel, ensure `DATABASE_URL` points to PostgreSQL
+- **Env var whitespace errors**: Vercel env vars may contain hidden newline characters. If you see "contains leading or trailing whitespace" errors, re-enter the value in Vercel dashboard
+
+### Vercel Serverless Limitations
+- **Package imports fail**: `garminconnect` and `hevy-api-client` cannot import in Vercel's Python serverless runtime
+- **Workaround**: Run `python scripts/run_sync.py` locally to sync data to production database
+- **Dashboard sync button**: Will show import errors in production; use local sync instead for full functionality
 
 ### Checking Logs
 ```bash
@@ -332,6 +343,25 @@ vercel logs
 - **Vercel**: Simple Python handler (serverless-compatible)
 - **Database**: PostgreSQL required for Vercel data persistence
 - **Reports**: Tufte-style HTML with inline SVG visualizations
+
+### Database Error Handling
+When a query fails (e.g., missing table), the SQLAlchemy transaction is aborted. Call `db.rollback()` before subsequent queries:
+```python
+try:
+    result = db.query(SomeModel).first()
+except Exception:
+    db.rollback()  # Required for next query to work
+    result = None
+```
+
+### Garmin API Response Quirks
+Some Garmin API endpoints return lists instead of dicts:
+- `training_readiness` - List of daily readings (use `[0]` for most recent)
+- `steps` - List of time intervals (sum all `steps` values)
+- `max_metrics` - List (may be empty)
+- `body_battery` - List with `bodyBatteryValuesArray` inside each item
+
+The `wellness_importer.py` handles these variations.
 
 ## Design System (`api/design_system.py`)
 All HTML pages use a consistent Material Design-inspired CSS framework:
