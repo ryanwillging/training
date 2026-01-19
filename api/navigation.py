@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 PAGES: List[Dict[str, str]] = [
     {"path": "/dashboard", "name": "Dashboard", "icon": ""},
     {"path": "/upcoming", "name": "Upcoming", "icon": ""},
+    {"path": "/reviews", "name": "Reviews", "icon": ""},
     {"path": "/metrics", "name": "Metrics", "icon": ""},
     {"path": "/api/reports/daily", "name": "Daily Report", "icon": ""},
     {"path": "/api/reports/weekly", "name": "Weekly Report", "icon": ""},

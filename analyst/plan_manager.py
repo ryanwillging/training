@@ -252,11 +252,14 @@ class TrainingPlanManager:
 
         return None
 
-    def run_nightly_evaluation(self) -> Dict[str, Any]:
+    def run_nightly_evaluation(self, user_context: Optional[str] = None) -> Dict[str, Any]:
         """
         Run the nightly AI evaluation of training progress.
 
         This is called by the cron job after data sync.
+
+        Args:
+            user_context: Optional user-provided context or notes for the AI to consider
 
         Returns:
             Evaluation results and any proposed modifications
@@ -266,6 +269,7 @@ class TrainingPlanManager:
             "current_week": self.get_current_week(),
             "evaluation": None,
             "modifications_proposed": 0,
+            "user_context_provided": bool(user_context),
             "errors": []
         }
 
@@ -284,7 +288,8 @@ class TrainingPlanManager:
                 recent_workouts=recent_workouts,
                 goal_progress=goal_progress,
                 scheduled_workouts=upcoming_workouts,
-                plan_summary=plan_summary
+                plan_summary=plan_summary,
+                user_context=user_context
             )
 
             results["evaluation"] = {
@@ -480,6 +485,242 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
         except Exception as e:
             print(f"✗ Error applying modification: {e}")
             return False
+
+    def apply_approved_modifications(self, modifications: List[Dict[str, Any]], sync_to_garmin: bool = True) -> Dict[str, Any]:
+        """
+        Apply approved modifications to the training plan and optionally sync to Garmin.
+
+        Args:
+            modifications: List of modification dictionaries from DailyReview.proposed_adjustments
+            sync_to_garmin: Whether to sync changes to Garmin Connect
+
+        Returns:
+            Results of applying modifications
+        """
+        results = {
+            "applied": [],
+            "failed": [],
+            "garmin_synced": [],
+            "garmin_failed": []
+        }
+
+        for mod in modifications:
+            mod_type = mod.get("type", "unknown")
+            week_number = mod.get("week")
+            workout_type = mod.get("workout_type")
+            description = mod.get("description", "")
+            reason = mod.get("reason", "")
+
+            try:
+                # Find the affected scheduled workout
+                target_workout = None
+                if week_number and workout_type:
+                    target_workout = self.db.query(ScheduledWorkout).filter(
+                        ScheduledWorkout.athlete_id == self.athlete_id,
+                        ScheduledWorkout.week_number == week_number,
+                        ScheduledWorkout.workout_type == workout_type
+                    ).first()
+
+                if mod_type == "add_rest" or mod_type == "skip":
+                    # Mark workout as skipped
+                    if target_workout:
+                        old_garmin_id = target_workout.garmin_workout_id
+                        target_workout.status = "skipped"
+                        target_workout.modification_reason = reason
+                        target_workout.modified_by = "ai"
+                        self.db.commit()
+
+                        results["applied"].append({
+                            "type": mod_type,
+                            "workout": workout_type,
+                            "week": week_number,
+                            "action": "marked_skipped"
+                        })
+
+                        # Delete from Garmin if it was synced
+                        if sync_to_garmin and old_garmin_id:
+                            try:
+                                self.garmin_manager.delete_workout(old_garmin_id)
+                                target_workout.garmin_workout_id = None
+                                target_workout.garmin_calendar_date = None
+                                self.db.commit()
+                                results["garmin_synced"].append({
+                                    "action": "deleted",
+                                    "workout_id": old_garmin_id
+                                })
+                            except Exception as e:
+                                results["garmin_failed"].append({
+                                    "action": "delete",
+                                    "error": str(e)
+                                })
+                    else:
+                        results["failed"].append({
+                            "type": mod_type,
+                            "reason": f"Could not find workout: week {week_number}, type {workout_type}"
+                        })
+
+                elif mod_type == "intensity" or mod_type == "volume":
+                    # Modify the workout intensity/volume
+                    if target_workout:
+                        # Update the workout data to reflect reduced intensity
+                        workout_data = json.loads(target_workout.workout_data_json) if target_workout.workout_data_json else {}
+                        workout_data["intensity_modifier"] = 0.85 if mod_type == "intensity" else 0.9
+                        workout_data["modification_reason"] = reason
+                        target_workout.workout_data_json = json.dumps(workout_data)
+                        target_workout.modification_reason = reason
+                        target_workout.modified_by = "ai"
+                        target_workout.status = "modified"
+
+                        old_garmin_id = target_workout.garmin_workout_id
+                        self.db.commit()
+
+                        results["applied"].append({
+                            "type": mod_type,
+                            "workout": workout_type,
+                            "week": week_number,
+                            "action": "modified"
+                        })
+
+                        # Re-sync to Garmin if it was previously synced
+                        if sync_to_garmin and old_garmin_id:
+                            try:
+                                # Delete old workout
+                                self.garmin_manager.delete_workout(old_garmin_id)
+
+                                # Create new workout with modifications
+                                garmin_workout = self._create_garmin_workout(target_workout)
+                                if garmin_workout:
+                                    new_id, scheduled = self.garmin_manager.create_and_schedule_workout(
+                                        garmin_workout,
+                                        target_workout.scheduled_date
+                                    )
+                                    if new_id:
+                                        target_workout.garmin_workout_id = new_id
+                                        target_workout.garmin_calendar_date = target_workout.scheduled_date
+                                        self.db.commit()
+                                        results["garmin_synced"].append({
+                                            "action": "replaced",
+                                            "old_id": old_garmin_id,
+                                            "new_id": new_id
+                                        })
+                            except Exception as e:
+                                results["garmin_failed"].append({
+                                    "action": "replace",
+                                    "error": str(e)
+                                })
+
+                elif mod_type == "reschedule":
+                    # Move workout to a different day
+                    new_date_str = mod.get("new_date")
+                    if target_workout and new_date_str:
+                        try:
+                            new_date = date.fromisoformat(new_date_str)
+                            old_date = target_workout.scheduled_date
+                            old_garmin_id = target_workout.garmin_workout_id
+
+                            target_workout.scheduled_date = new_date
+                            target_workout.modification_reason = reason
+                            target_workout.modified_by = "ai"
+                            self.db.commit()
+
+                            results["applied"].append({
+                                "type": mod_type,
+                                "workout": workout_type,
+                                "from_date": str(old_date),
+                                "to_date": str(new_date),
+                                "action": "rescheduled"
+                            })
+
+                            # Update Garmin calendar
+                            if sync_to_garmin and old_garmin_id:
+                                try:
+                                    # Delete old scheduled workout
+                                    self.garmin_manager.delete_workout(old_garmin_id)
+
+                                    # Re-create and schedule on new date
+                                    garmin_workout = self._create_garmin_workout(target_workout)
+                                    if garmin_workout:
+                                        new_id, scheduled = self.garmin_manager.create_and_schedule_workout(
+                                            garmin_workout,
+                                            new_date
+                                        )
+                                        if new_id:
+                                            target_workout.garmin_workout_id = new_id
+                                            target_workout.garmin_calendar_date = new_date
+                                            self.db.commit()
+                                            results["garmin_synced"].append({
+                                                "action": "rescheduled",
+                                                "new_date": str(new_date),
+                                                "new_id": new_id
+                                            })
+                                except Exception as e:
+                                    results["garmin_failed"].append({
+                                        "action": "reschedule",
+                                        "error": str(e)
+                                    })
+                        except ValueError:
+                            results["failed"].append({
+                                "type": mod_type,
+                                "reason": f"Invalid date format: {new_date_str}"
+                            })
+
+                elif mod_type == "swap_workout":
+                    # Swap one workout type for another
+                    new_workout_type = mod.get("new_workout_type")
+                    if target_workout and new_workout_type:
+                        old_type = target_workout.workout_type
+                        old_garmin_id = target_workout.garmin_workout_id
+
+                        target_workout.workout_type = new_workout_type
+                        target_workout.workout_name = f"{new_workout_type.replace('_', ' ').title()} - Week {week_number} (swapped)"
+                        target_workout.modification_reason = reason
+                        target_workout.modified_by = "ai"
+                        self.db.commit()
+
+                        results["applied"].append({
+                            "type": mod_type,
+                            "from_type": old_type,
+                            "to_type": new_workout_type,
+                            "week": week_number,
+                            "action": "swapped"
+                        })
+
+                        # Update Garmin
+                        if sync_to_garmin and old_garmin_id:
+                            try:
+                                self.garmin_manager.delete_workout(old_garmin_id)
+                                garmin_workout = self._create_garmin_workout(target_workout)
+                                if garmin_workout:
+                                    new_id, scheduled = self.garmin_manager.create_and_schedule_workout(
+                                        garmin_workout,
+                                        target_workout.scheduled_date
+                                    )
+                                    if new_id:
+                                        target_workout.garmin_workout_id = new_id
+                                        self.db.commit()
+                                        results["garmin_synced"].append({
+                                            "action": "swapped",
+                                            "new_id": new_id
+                                        })
+                            except Exception as e:
+                                results["garmin_failed"].append({
+                                    "action": "swap",
+                                    "error": str(e)
+                                })
+
+                else:
+                    results["failed"].append({
+                        "type": mod_type,
+                        "reason": f"Unknown modification type: {mod_type}"
+                    })
+
+            except Exception as e:
+                results["failed"].append({
+                    "type": mod_type,
+                    "reason": str(e)
+                })
+
+        return results
 
     def get_weekly_summary(self, week_number: Optional[int] = None) -> Dict[str, Any]:
         """

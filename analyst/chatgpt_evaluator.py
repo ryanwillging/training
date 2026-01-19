@@ -68,8 +68,12 @@ When evaluating, consider:
 - Recovery status
 - Goal alignment
 
-Be conservative with modifications - only suggest changes when clearly warranted.
-Always explain your reasoning clearly."""
+IMPORTANT GUIDELINES:
+- Be VERY conservative with modifications - only suggest changes when clearly warranted
+- Minimize the number of workouts affected - prefer surgical, targeted changes over broad modifications
+- Always explain your reasoning clearly and specifically
+- If no changes are needed, say so - don't suggest changes just for the sake of it
+- Consider the athlete's user notes/context if provided"""
 
     def __init__(self, model: str = "o1-preview"):
         """
@@ -93,7 +97,8 @@ Always explain your reasoning clearly."""
         recent_workouts: List[Dict[str, Any]],
         goal_progress: Dict[str, Any],
         scheduled_workouts: List[Dict[str, Any]],
-        plan_summary: str
+        plan_summary: str,
+        user_context: Optional[str] = None
     ) -> PlanEvaluation:
         """
         Evaluate current training progress and recommend modifications.
@@ -105,6 +110,7 @@ Always explain your reasoning clearly."""
             goal_progress: Progress toward each goal
             scheduled_workouts: Upcoming scheduled workouts
             plan_summary: Summary of the training plan for context
+            user_context: Optional user-provided notes or context to consider
 
         Returns:
             PlanEvaluation with assessment and recommended modifications
@@ -116,7 +122,8 @@ Always explain your reasoning clearly."""
             recent_workouts,
             goal_progress,
             scheduled_workouts,
-            plan_summary
+            plan_summary,
+            user_context
         )
 
         try:
@@ -161,9 +168,20 @@ Always explain your reasoning clearly."""
         recent_workouts: List[Dict[str, Any]],
         goal_progress: Dict[str, Any],
         scheduled_workouts: List[Dict[str, Any]],
-        plan_summary: str
+        plan_summary: str,
+        user_context: Optional[str] = None
     ) -> str:
         """Build the evaluation prompt with all context."""
+        # Include user context section if provided
+        user_context_section = ""
+        if user_context:
+            user_context_section = f"""
+## Athlete Notes (User-Provided Context)
+{user_context}
+
+**IMPORTANT**: Please consider the above notes from the athlete when making your evaluation.
+"""
+
         prompt = f"""# Training Progress Evaluation Request
 
 ## Current Status
@@ -185,7 +203,7 @@ Always explain your reasoning clearly."""
 
 ## Plan Summary
 {plan_summary}
-
+{user_context_section}
 ---
 
 Please analyze this data and provide:

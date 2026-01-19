@@ -11,9 +11,10 @@ from pydantic import BaseModel
 
 from api.timezone import get_eastern_today
 from database.base import SessionLocal
-from database.models import ScheduledWorkout
+from database.models import ScheduledWorkout, DailyReview, PlanAdjustment
 from analyst.plan_manager import TrainingPlanManager
 from api.design_system import wrap_page
+import json
 
 
 router = APIRouter(prefix="/plan", tags=["plan"])
@@ -545,6 +546,956 @@ def _generate_upcoming_html(workouts_by_date: dict, today: date, days: int) -> s
                 width: 36px;
                 height: 36px;
                 font-size: 18px;
+            }}
+        }}
+    </style>
+    '''
+
+
+class ReviewActionRequest(BaseModel):
+    """Request to approve or reject a review."""
+    action: str  # 'approve', 'reject'
+    notes: Optional[str] = None
+
+
+class EvaluationRequest(BaseModel):
+    """Request to run an AI evaluation with optional user context."""
+    user_context: Optional[str] = None
+
+
+@router.get("/reviews-page", response_class=HTMLResponse)
+async def get_reviews_page():
+    """
+    HTML page showing AI-generated training plan reviews and proposed modifications.
+    Allows approving or rejecting suggested changes.
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        # Get recent reviews (last 30 days)
+        today = get_eastern_today()
+        cutoff = today - timedelta(days=30)
+
+        reviews = db.query(DailyReview).filter(
+            DailyReview.athlete_id == athlete_id,
+            DailyReview.review_date >= cutoff
+        ).order_by(DailyReview.review_date.desc()).all()
+
+        # Get plan status for context
+        manager = TrainingPlanManager(db, athlete_id)
+        plan_status = manager.get_plan_status()
+
+        content = _generate_reviews_html(reviews, plan_status, today)
+
+        return HTMLResponse(content=wrap_page(content, "Plan Reviews", "/reviews"))
+
+    finally:
+        db.close()
+
+
+@router.post("/reviews/{review_id}/action")
+async def action_review(review_id: int, request: ReviewActionRequest):
+    """
+    Approve or reject a daily review's proposed modifications.
+
+    When approved, modifications are applied to the training plan and
+    synced to Garmin Connect (replacing existing workouts if needed).
+
+    Args:
+        review_id: ID of the DailyReview
+        request: Action to take (approve/reject) and optional notes
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        review = db.query(DailyReview).filter(
+            DailyReview.id == review_id,
+            DailyReview.athlete_id == athlete_id
+        ).first()
+
+        if not review:
+            raise HTTPException(status_code=404, detail="Review not found")
+
+        if review.approval_status not in ("pending", "no_changes_needed"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Review already {review.approval_status}"
+            )
+
+        garmin_results = None
+
+        if request.action == "approve":
+            review.approval_status = "approved"
+            review.approved_at = datetime.utcnow()
+            review.approval_notes = request.notes
+
+            # Apply the modifications if approved
+            if review.proposed_adjustments:
+                adjustments = json.loads(review.proposed_adjustments)
+
+                # Create PlanAdjustment records for tracking
+                for adj in adjustments:
+                    plan_adj = PlanAdjustment(
+                        plan_id=1,  # Default plan
+                        review_id=review.id,
+                        adjustment_date=get_eastern_today(),
+                        adjustment_type=adj.get("type", "unknown"),
+                        reasoning=adj.get("reason", ""),
+                        changes=json.dumps(adj)
+                    )
+                    db.add(plan_adj)
+
+                # Apply modifications to ScheduledWorkouts and sync to Garmin
+                try:
+                    manager = TrainingPlanManager(db, athlete_id)
+                    garmin_results = manager.apply_approved_modifications(
+                        adjustments,
+                        sync_to_garmin=True
+                    )
+                    review.adjustments_applied = True
+                except Exception as e:
+                    # Still mark as approved even if Garmin sync fails
+                    review.adjustments_applied = True
+                    garmin_results = {"error": str(e)}
+
+        elif request.action == "reject":
+            review.approval_status = "rejected"
+            review.approval_notes = request.notes
+
+        else:
+            raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
+
+        db.commit()
+
+        result = {
+            "status": "success",
+            "review_id": review_id,
+            "action": request.action,
+            "approval_status": review.approval_status
+        }
+
+        if garmin_results:
+            result["garmin_sync"] = garmin_results
+
+        return result
+
+    finally:
+        db.close()
+
+
+@router.get("/reviews/latest")
+async def get_latest_review():
+    """
+    Get the most recent AI evaluation review.
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        review = db.query(DailyReview).filter(
+            DailyReview.athlete_id == athlete_id
+        ).order_by(DailyReview.review_date.desc()).first()
+
+        if not review:
+            return {"status": "no_reviews", "message": "No AI evaluations have been run yet"}
+
+        return {
+            "id": review.id,
+            "date": str(review.review_date),
+            "approval_status": review.approval_status,
+            "progress_summary": json.loads(review.progress_summary) if review.progress_summary else None,
+            "insights": review.insights,
+            "recommendations": review.recommendations,
+            "proposed_adjustments": json.loads(review.proposed_adjustments) if review.proposed_adjustments else [],
+            "created_at": review.created_at.isoformat() if review.created_at else None
+        }
+
+    finally:
+        db.close()
+
+
+@router.post("/evaluate-with-context")
+async def run_evaluation_with_context(request: EvaluationRequest):
+    """
+    Run AI-powered evaluation with optional user-provided context.
+
+    This allows the user to add notes or context that the AI should consider
+    when evaluating the training plan.
+
+    Args:
+        request: Contains optional user_context string
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        manager = TrainingPlanManager(db, athlete_id)
+
+        if not manager.get_plan_start_date():
+            raise HTTPException(
+                status_code=400,
+                detail="Plan not initialized. Call /plan/initialize first."
+            )
+
+        # Run evaluation with user context
+        results = manager.run_nightly_evaluation(user_context=request.user_context)
+        return results
+
+    finally:
+        db.close()
+
+
+@router.get("/evaluation-context")
+async def get_evaluation_context():
+    """
+    Get the data that would be sent to the AI for evaluation.
+    Useful for understanding what the AI sees when making recommendations.
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        manager = TrainingPlanManager(db, athlete_id)
+
+        if not manager.get_plan_start_date():
+            return {
+                "status": "plan_not_initialized",
+                "message": "Initialize your training plan first"
+            }
+
+        # Gather the same data used for evaluation
+        current_week = manager.get_current_week()
+        wellness_data = manager._get_recent_wellness(days=7)
+        recent_workouts = manager._get_recent_workouts(days=14)
+        goal_progress = manager._get_goal_progress()
+        upcoming_workouts = manager._get_upcoming_workouts(days=7)
+        plan_summary = manager._get_plan_summary()
+
+        return {
+            "current_week": current_week,
+            "wellness_data": wellness_data,
+            "recent_workouts": recent_workouts,
+            "goal_progress": goal_progress,
+            "upcoming_workouts": upcoming_workouts,
+            "plan_summary": plan_summary,
+            "ai_instructions": "The AI is instructed to be conservative with modifications - only suggesting changes when clearly warranted. It evaluates wellness trends, workout adherence, and goal alignment to determine if adjustments are needed."
+        }
+
+    finally:
+        db.close()
+
+
+def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str:
+    """Generate HTML content for the reviews page."""
+
+    # Status badge colors
+    status_colors = {
+        "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending Review"},
+        "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
+        "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"},
+        "no_changes_needed": {"bg": "#e3f2fd", "text": "#1565c0", "label": "No Changes Needed"},
+    }
+
+    # Assessment badge colors
+    assessment_colors = {
+        "on_track": {"bg": "#e8f5e9", "text": "#2e7d32", "icon": "✓"},
+        "needs_adjustment": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠"},
+        "significant_changes_needed": {"bg": "#ffebee", "text": "#c62828", "icon": "!"},
+        "error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
+        "parse_error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
+    }
+
+    # Priority colors
+    priority_colors = {
+        "high": {"bg": "#ffebee", "text": "#c62828"},
+        "medium": {"bg": "#fff3e0", "text": "#e65100"},
+        "low": {"bg": "#e3f2fd", "text": "#1565c0"},
+    }
+
+    # Check for pending reviews
+    pending_reviews = [r for r in reviews if r.approval_status == "pending"]
+    pending_count = len(pending_reviews)
+
+    # Plan info header
+    current_week = plan_status.get("current_week", "?")
+    is_initialized = plan_status.get("initialized", False)
+
+    if not is_initialized:
+        return '''
+        <header class="mb-6">
+            <h1 class="md-headline-large mb-2">Plan Reviews</h1>
+            <p class="md-body-large text-secondary">AI-generated training plan evaluations</p>
+        </header>
+
+        <div class="md-card">
+            <div class="md-card-content" style="text-align: center; padding: 48px;">
+                <div style="font-size: 48px; margin-bottom: 16px;">📋</div>
+                <h2 class="md-title-large mb-4">Plan Not Initialized</h2>
+                <p class="md-body-medium text-secondary">Initialize your training plan to enable AI evaluations.</p>
+            </div>
+        </div>
+        '''
+
+    if not reviews:
+        return f'''
+        <header class="mb-6">
+            <h1 class="md-headline-large mb-2">Plan Reviews</h1>
+            <p class="md-body-large text-secondary">Week {current_week} of 24</p>
+        </header>
+
+        <div class="md-card">
+            <div class="md-card-content" style="text-align: center; padding: 48px;">
+                <div style="font-size: 48px; margin-bottom: 16px;">🤖</div>
+                <h2 class="md-title-large mb-4">No Evaluations Yet</h2>
+                <p class="md-body-medium text-secondary">AI evaluations run nightly after the cron sync.</p>
+                <p class="md-body-small text-secondary mt-2">You can also trigger a manual evaluation via the API.</p>
+            </div>
+        </div>
+        '''
+
+    # Build review cards
+    cards_html = ""
+    for review in reviews:
+        # Parse data
+        progress_data = json.loads(review.progress_summary) if review.progress_summary else {}
+        adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
+
+        # Status
+        status = review.approval_status or "pending"
+        status_style = status_colors.get(status, status_colors["pending"])
+
+        # Assessment
+        assessment = progress_data.get("overall_assessment", "unknown")
+        assessment_style = assessment_colors.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
+        confidence = progress_data.get("confidence_score", 0)
+
+        # Date formatting
+        review_date = review.review_date
+        if review_date == today:
+            date_label = "Today"
+        elif review_date == today - timedelta(days=1):
+            date_label = "Yesterday"
+        else:
+            date_label = review_date.strftime("%b %d, %Y")
+
+        # Build modifications list
+        mods_html = ""
+        if adjustments:
+            for idx, adj in enumerate(adjustments):
+                adj_type = adj.get("type", "unknown")
+                adj_desc = adj.get("description", "No description")
+                adj_reason = adj.get("reason", "")
+                adj_priority = adj.get("priority", "medium")
+                adj_week = adj.get("week", "?")
+
+                p_style = priority_colors.get(adj_priority, priority_colors["medium"])
+
+                mods_html += f'''
+                <div class="modification-item">
+                    <div class="mod-header">
+                        <span class="mod-type">{adj_type.replace("_", " ").title()}</span>
+                        <span class="mod-priority" style="background: {p_style["bg"]}; color: {p_style["text"]};">{adj_priority.upper()}</span>
+                        <span class="mod-week">Week {adj_week}</span>
+                    </div>
+                    <div class="mod-description">{adj_desc}</div>
+                    {f'<div class="mod-reason">{adj_reason}</div>' if adj_reason else ''}
+                </div>
+                '''
+        else:
+            mods_html = '<p class="text-secondary" style="padding: 16px;">No modifications proposed</p>'
+
+        # Action buttons (only for pending reviews)
+        actions_html = ""
+        if status == "pending":
+            actions_html = f'''
+            <div class="review-actions">
+                <button class="md-btn md-btn-filled approve-btn" onclick="actionReview({review.id}, 'approve')">
+                    ✓ Approve Changes
+                </button>
+                <button class="md-btn md-btn-outlined reject-btn" onclick="actionReview({review.id}, 'reject')">
+                    ✗ Reject
+                </button>
+            </div>
+            '''
+        elif review.approval_notes:
+            actions_html = f'''
+            <div class="review-notes">
+                <strong>Notes:</strong> {review.approval_notes}
+            </div>
+            '''
+
+        cards_html += f'''
+        <div class="review-card {'pending' if status == 'pending' else ''}">
+            <div class="review-header">
+                <div class="review-date">
+                    <span class="date-label">{date_label}</span>
+                    <span class="date-full">{review_date.strftime("%A")}</span>
+                </div>
+                <div class="review-badges">
+                    <span class="status-badge" style="background: {status_style["bg"]}; color: {status_style["text"]};">
+                        {status_style["label"]}
+                    </span>
+                    <span class="assessment-badge" style="background: {assessment_style["bg"]}; color: {assessment_style["text"]};">
+                        {assessment_style["icon"]} {assessment.replace("_", " ").title()}
+                    </span>
+                    {f'<span class="confidence-badge">{int(confidence * 100)}% confidence</span>' if confidence else ''}
+                </div>
+            </div>
+
+            <div class="review-body">
+                {f'<div class="review-insights"><h4>Insights</h4><p>{review.insights}</p></div>' if review.insights else ''}
+                {f'<div class="review-recommendations"><h4>Recommendations</h4><p>{review.recommendations}</p></div>' if review.recommendations else ''}
+
+                <div class="review-modifications">
+                    <h4>Proposed Modifications ({len(adjustments)})</h4>
+                    <div class="modifications-list">
+                        {mods_html}
+                    </div>
+                </div>
+            </div>
+
+            {actions_html}
+        </div>
+        '''
+
+    # Pending alert if any
+    pending_alert = ""
+    if pending_count > 0:
+        pending_alert = f'''
+        <div class="pending-alert">
+            <div class="alert-icon">⚠️</div>
+            <div class="alert-content">
+                <strong>{pending_count} review{"s" if pending_count > 1 else ""} pending approval</strong>
+                <p>Review the AI-suggested modifications and approve or reject them.</p>
+            </div>
+        </div>
+        '''
+
+    return f'''
+    <header class="mb-6">
+        <h1 class="md-headline-large mb-2">Plan Reviews</h1>
+        <p class="md-body-large text-secondary">Week {current_week} of 24 · {len(reviews)} evaluations</p>
+    </header>
+
+    <!-- Manual Evaluation Section -->
+    <div class="md-card mb-6">
+        <div class="md-card-header">
+            <h2 class="md-title-medium">Run AI Evaluation</h2>
+        </div>
+        <div class="md-card-content">
+            <p class="md-body-medium text-secondary mb-4">
+                Add context or notes for the AI to consider when evaluating your training plan.
+                The AI will analyze your wellness data, recent workouts, and goal progress.
+            </p>
+            <div class="context-input-group">
+                <label for="user-context" class="md-label-medium">Your Notes (optional)</label>
+                <textarea
+                    id="user-context"
+                    class="md-input context-textarea"
+                    placeholder="Example: I've been feeling fatigued this week, considering taking an extra rest day... or I'm feeling great and want to push harder..."
+                    rows="3"
+                ></textarea>
+            </div>
+            <div class="evaluation-actions">
+                <button class="md-btn md-btn-filled" onclick="runEvaluation()" id="eval-btn">
+                    🤖 Run Evaluation
+                </button>
+                <button class="md-btn md-btn-outlined" onclick="viewContext()">
+                    📊 View Input Data
+                </button>
+            </div>
+            <div id="eval-status" class="eval-status hidden"></div>
+        </div>
+    </div>
+
+    <!-- Context Modal -->
+    <div id="context-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="md-title-large">AI Evaluation Input Data</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="context-data">
+                Loading...
+            </div>
+        </div>
+    </div>
+
+    {pending_alert}
+
+    <div class="reviews-list">
+        {cards_html}
+    </div>
+
+    <script>
+    async function actionReview(reviewId, action) {{
+        const notes = action === 'reject'
+            ? prompt('Reason for rejection (optional):')
+            : null;
+
+        try {{
+            const response = await fetch(`/api/plan/reviews/${{reviewId}}/action`, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ action, notes }})
+            }});
+
+            if (response.ok) {{
+                location.reload();
+            }} else {{
+                const data = await response.json();
+                alert('Error: ' + (data.detail || 'Failed to process action'));
+            }}
+        }} catch (e) {{
+            alert('Error: ' + e.message);
+        }}
+    }}
+
+    async function runEvaluation() {{
+        const userContext = document.getElementById('user-context').value.trim();
+        const btn = document.getElementById('eval-btn');
+        const status = document.getElementById('eval-status');
+
+        btn.disabled = true;
+        btn.textContent = '⏳ Running...';
+        status.className = 'eval-status';
+        status.innerHTML = '<div class="status-loading">Analyzing your training data with AI... This may take 30-60 seconds.</div>';
+
+        try {{
+            const response = await fetch('/api/plan/evaluate-with-context', {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ user_context: userContext || null }})
+            }});
+
+            const data = await response.json();
+
+            if (response.ok) {{
+                status.innerHTML = '<div class="status-success">✓ Evaluation complete! Refreshing...</div>';
+                setTimeout(() => location.reload(), 1500);
+            }} else {{
+                status.innerHTML = '<div class="status-error">✗ Error: ' + (data.detail || 'Evaluation failed') + '</div>';
+                btn.disabled = false;
+                btn.textContent = '🤖 Run Evaluation';
+            }}
+        }} catch (e) {{
+            status.innerHTML = '<div class="status-error">✗ Error: ' + e.message + '</div>';
+            btn.disabled = false;
+            btn.textContent = '🤖 Run Evaluation';
+        }}
+    }}
+
+    async function viewContext() {{
+        const modal = document.getElementById('context-modal');
+        const content = document.getElementById('context-data');
+        modal.classList.remove('hidden');
+
+        try {{
+            const response = await fetch('/api/plan/evaluation-context');
+            const data = await response.json();
+
+            content.innerHTML = `
+                <div class="context-section">
+                    <h4>Current Week</h4>
+                    <p>Week ${{data.current_week}} of 24</p>
+                </div>
+                <div class="context-section">
+                    <h4>AI Instructions</h4>
+                    <p class="text-secondary">${{data.ai_instructions}}</p>
+                </div>
+                <div class="context-section">
+                    <h4>Wellness Data (7-day average)</h4>
+                    <pre>${{JSON.stringify(data.wellness_data, null, 2)}}</pre>
+                </div>
+                <div class="context-section">
+                    <h4>Recent Workouts (14 days)</h4>
+                    <pre>${{JSON.stringify(data.recent_workouts, null, 2)}}</pre>
+                </div>
+                <div class="context-section">
+                    <h4>Goal Progress</h4>
+                    <pre>${{JSON.stringify(data.goal_progress, null, 2)}}</pre>
+                </div>
+                <div class="context-section">
+                    <h4>Upcoming Workouts</h4>
+                    <pre>${{JSON.stringify(data.upcoming_workouts, null, 2)}}</pre>
+                </div>
+            `;
+        }} catch (e) {{
+            content.innerHTML = '<p class="status-error">Error loading context: ' + e.message + '</p>';
+        }}
+    }}
+
+    function closeModal() {{
+        document.getElementById('context-modal').classList.add('hidden');
+    }}
+
+    // Close modal on escape key
+    document.addEventListener('keydown', (e) => {{
+        if (e.key === 'Escape') closeModal();
+    }});
+    </script>
+
+    <style>
+        .pending-alert {{
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+            padding: 16px 20px;
+            background: #fff3e0;
+            border-radius: var(--radius-lg);
+            border: 1px solid #ffcc80;
+            margin-bottom: 24px;
+        }}
+
+        .alert-icon {{
+            font-size: 24px;
+        }}
+
+        .alert-content strong {{
+            color: #e65100;
+        }}
+
+        .alert-content p {{
+            margin: 4px 0 0;
+            color: #bf360c;
+            font-size: 14px;
+        }}
+
+        .reviews-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }}
+
+        .review-card {{
+            background: var(--md-surface);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--md-outline-variant);
+            overflow: hidden;
+        }}
+
+        .review-card.pending {{
+            border-color: #ffcc80;
+            box-shadow: 0 0 0 1px #fff3e0;
+        }}
+
+        .review-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background: var(--md-surface-variant);
+            border-bottom: 1px solid var(--md-outline-variant);
+            flex-wrap: wrap;
+            gap: 12px;
+        }}
+
+        .review-date {{
+            display: flex;
+            flex-direction: column;
+        }}
+
+        .date-label {{
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--md-on-surface);
+        }}
+
+        .date-full {{
+            font-size: 13px;
+            color: var(--md-on-surface-variant);
+        }}
+
+        .review-badges {{
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+
+        .status-badge, .assessment-badge, .confidence-badge {{
+            font-size: 11px;
+            padding: 4px 10px;
+            border-radius: var(--radius-full);
+            font-weight: 500;
+        }}
+
+        .confidence-badge {{
+            background: var(--md-surface);
+            color: var(--md-on-surface-variant);
+            border: 1px solid var(--md-outline-variant);
+        }}
+
+        .review-body {{
+            padding: 20px;
+        }}
+
+        .review-insights, .review-recommendations {{
+            margin-bottom: 20px;
+        }}
+
+        .review-body h4 {{
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--md-on-surface);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+
+        .review-body p {{
+            color: var(--md-on-surface-variant);
+            line-height: 1.6;
+        }}
+
+        .review-modifications {{
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid var(--md-outline-variant);
+        }}
+
+        .modifications-list {{
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            margin-top: 12px;
+        }}
+
+        .modification-item {{
+            padding: 16px;
+            background: var(--md-surface-variant);
+            border-radius: var(--radius-md);
+            border-left: 4px solid var(--md-primary);
+        }}
+
+        .mod-header {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }}
+
+        .mod-type {{
+            font-weight: 600;
+            color: var(--md-on-surface);
+        }}
+
+        .mod-priority {{
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+            font-weight: 600;
+        }}
+
+        .mod-week {{
+            font-size: 12px;
+            color: var(--md-on-surface-variant);
+        }}
+
+        .mod-description {{
+            color: var(--md-on-surface);
+            margin-bottom: 6px;
+        }}
+
+        .mod-reason {{
+            font-size: 13px;
+            color: var(--md-on-surface-variant);
+            font-style: italic;
+        }}
+
+        .review-actions {{
+            display: flex;
+            gap: 12px;
+            padding: 16px 20px;
+            background: var(--md-surface-variant);
+            border-top: 1px solid var(--md-outline-variant);
+        }}
+
+        .approve-btn {{
+            background: #2e7d32 !important;
+        }}
+
+        .approve-btn:hover {{
+            background: #1b5e20 !important;
+        }}
+
+        .reject-btn {{
+            color: #c62828 !important;
+            border-color: #c62828 !important;
+        }}
+
+        .reject-btn:hover {{
+            background: #ffebee !important;
+        }}
+
+        .review-notes {{
+            padding: 12px 20px;
+            background: var(--md-surface-variant);
+            border-top: 1px solid var(--md-outline-variant);
+            font-size: 14px;
+            color: var(--md-on-surface-variant);
+        }}
+
+        /* Context input styles */
+        .context-input-group {{
+            margin-bottom: 16px;
+        }}
+
+        .context-input-group label {{
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: var(--md-on-surface);
+        }}
+
+        .context-textarea {{
+            width: 100%;
+            min-height: 80px;
+            resize: vertical;
+            font-family: inherit;
+        }}
+
+        .evaluation-actions {{
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }}
+
+        .eval-status {{
+            margin-top: 16px;
+        }}
+
+        .eval-status.hidden {{
+            display: none;
+        }}
+
+        .status-loading {{
+            padding: 12px 16px;
+            background: #e3f2fd;
+            color: #1565c0;
+            border-radius: var(--radius-md);
+        }}
+
+        .status-success {{
+            padding: 12px 16px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-radius: var(--radius-md);
+        }}
+
+        .status-error {{
+            padding: 12px 16px;
+            background: #ffebee;
+            color: #c62828;
+            border-radius: var(--radius-md);
+        }}
+
+        /* Modal styles */
+        .modal {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }}
+
+        .modal.hidden {{
+            display: none;
+        }}
+
+        .modal-content {{
+            background: var(--md-surface);
+            border-radius: var(--radius-lg);
+            max-width: 800px;
+            max-height: 80vh;
+            width: 100%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }}
+
+        .modal-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--md-outline-variant);
+        }}
+
+        .modal-close {{
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: var(--md-on-surface-variant);
+            padding: 4px 8px;
+        }}
+
+        .modal-close:hover {{
+            color: var(--md-on-surface);
+        }}
+
+        .modal-body {{
+            padding: 20px;
+            overflow-y: auto;
+        }}
+
+        .context-section {{
+            margin-bottom: 24px;
+        }}
+
+        .context-section h4 {{
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--md-on-surface);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }}
+
+        .context-section pre {{
+            background: var(--md-surface-variant);
+            padding: 12px;
+            border-radius: var(--radius-md);
+            overflow-x: auto;
+            font-size: 12px;
+            line-height: 1.5;
+            max-height: 200px;
+            overflow-y: auto;
+        }}
+
+        @media (max-width: 640px) {{
+            .review-header {{
+                flex-direction: column;
+                align-items: flex-start;
+            }}
+
+            .review-actions {{
+                flex-direction: column;
+            }}
+
+            .review-actions button {{
+                width: 100%;
+            }}
+
+            .evaluation-actions {{
+                flex-direction: column;
+            }}
+
+            .evaluation-actions button {{
+                width: 100%;
+            }}
+
+            .modal-content {{
+                max-height: 90vh;
             }}
         }}
     </style>

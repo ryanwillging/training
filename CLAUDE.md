@@ -98,6 +98,16 @@ training/
 - `/api/plan/evaluate` - Run AI evaluation (POST)
 - `/api/plan/upcoming` - Upcoming scheduled workouts
 
+### Plan Reviews
+- `/reviews` - Plan reviews page (HTML) - Review AI-suggested modifications
+- `/api/plan/evaluation-context` - View data sent to AI for evaluation
+- `/api/plan/reviews/latest` - Get most recent AI evaluation
+- `/api/plan/reviews/{id}/action` - Approve/reject a modification (POST)
+  - Body: `{"action": "approve" | "reject"}`
+  - On approve: Updates ScheduledWorkout, syncs to Garmin (delete old, create new)
+- `/api/plan/evaluate-with-context` - Run AI evaluation with user notes (POST)
+  - Body: `{"user_context": "optional notes for AI to consider"}`
+
 ### Cron
 - `/api/cron/sync` - Trigger data sync (GET for Vercel Cron, POST for manual)
   - Vercel Cron sends `x-vercel-cron` header (auto-authorized)
@@ -200,8 +210,9 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
 3. Run goal analysis
 4. **Run AI plan evaluation** (ChatGPT o1 reasoning mode)
    - Analyzes wellness, workouts, goal progress
-   - Proposes modifications if needed
-   - High-confidence, high-priority changes auto-applied
+   - Proposes modifications if needed (conservative approach - minimal changes)
+   - Modifications stored as pending for user review at `/reviews`
+   - User context can be provided via `/api/plan/evaluate-with-context`
 
 ### Cron Logging & Monitoring
 Each cron run is logged to the `CronLog` table with:
@@ -230,6 +241,33 @@ python scripts/run_sync.py
   - Fri: VO2 Session (Run/Row/Bike)
   - Sat: Lift B (Upper body)
   - Sun: REST
+
+### Plan Review & Approval Workflow
+The Reviews page (`/reviews`) displays AI-suggested modifications from nightly evaluations:
+
+1. **View Modifications**: See pending changes with AI reasoning
+2. **Approve/Reject**: Click buttons to accept or reject each modification
+3. **Garmin Sync**: On approval, the system automatically:
+   - Deletes the old workout from Garmin calendar
+   - Creates a new workout with the modification applied
+   - Schedules the new workout on Garmin calendar
+
+**Supported Modification Types**:
+- `add_rest` / `skip` - Mark workout as skipped, remove from Garmin
+- `intensity` / `volume` - Update workout details, recreate in Garmin
+- `reschedule` - Move workout to new date, update Garmin calendar
+- `swap_workout` - Replace workout type, recreate in Garmin
+
+### Manual AI Evaluation
+Run AI evaluation manually with optional user context:
+```bash
+# Via API
+curl -X POST https://training.ryanwillging.com/api/plan/evaluate-with-context \
+  -H "Content-Type: application/json" \
+  -d '{"user_context": "Feeling fatigued from travel this week"}'
+```
+
+The user context is included in the AI prompt, allowing the athlete to provide relevant information (fatigue, schedule constraints, injuries) that the AI should consider when evaluating the plan.
 
 ## Local Development Setup
 ```bash
@@ -395,6 +433,20 @@ today = get_eastern_today()  # Instead of date.today()
 now = get_eastern_now()      # Instead of datetime.now()
 ```
 **Never use `date.today()` or `datetime.now()` directly** - Vercel runs in UTC.
+
+## Navigation Pages
+All HTML pages are registered in `api/navigation.py` and appear in the nav bar:
+
+| Path | Name | Description |
+|------|------|-------------|
+| `/dashboard` | Dashboard | Main overview with sync status |
+| `/upcoming` | Upcoming | Scheduled workouts calendar |
+| `/reviews` | Reviews | AI plan modifications to approve/reject |
+| `/metrics` | Metrics | Body composition and performance tracking |
+| `/api/reports/daily` | Daily Report | Tufte-style daily training report |
+| `/api/reports/weekly` | Weekly Report | Rolling 7-day training summary |
+
+To add a new page, add it to the `PAGES` list in `api/navigation.py`.
 
 ## Design System (`api/design_system.py`)
 All HTML pages use a consistent Material Design-inspired CSS framework:
