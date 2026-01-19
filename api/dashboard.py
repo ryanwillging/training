@@ -4,10 +4,30 @@ Uses Material Design-inspired components for consistent styling.
 """
 
 import json
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 
 from api.design_system import wrap_page, get_stat_card, get_progress_card
+
+
+# Eastern timezone (UTC-5, or UTC-4 during DST)
+def _get_eastern_now():
+    """Get current datetime in Eastern time."""
+    # Use a fixed offset for EST (UTC-5). For proper DST handling,
+    # you'd need pytz or zoneinfo, but this works for most cases.
+    # Check if we're in DST (roughly March-November)
+    utc_now = datetime.now(timezone.utc)
+    month = utc_now.month
+    # Simple DST check: DST is roughly March 10 - November 3
+    is_dst = 3 <= month <= 10
+    offset = timedelta(hours=-4 if is_dst else -5)
+    eastern_tz = timezone(offset)
+    return utc_now.astimezone(eastern_tz)
+
+
+def _get_eastern_today():
+    """Get current date in Eastern time."""
+    return _get_eastern_now().date()
 
 
 def generate_dashboard_html(db):
@@ -72,12 +92,12 @@ def generate_dashboard_html(db):
 
     # Calculate current streak
     streak = 0
-    check_date = date.today()
+    check_date = _get_eastern_today()
     while check_date >= min_date:
         if check_date in activity_by_date:
             streak += 1
             check_date -= timedelta(days=1)
-        elif (date.today() - check_date).days <= 1:
+        elif (_get_eastern_today() - check_date).days <= 1:
             check_date -= timedelta(days=1)
         else:
             break
@@ -85,7 +105,7 @@ def generate_dashboard_html(db):
     # Weekly volume (last 12 weeks)
     weekly_hours = []
     for i in range(12):
-        week_end = date.today() - timedelta(days=date.today().weekday()) - timedelta(weeks=i)
+        week_end = _get_eastern_today() - timedelta(days=_get_eastern_today().weekday()) - timedelta(weeks=i)
         week_start = week_end - timedelta(days=6)
         week_minutes = sum(
             a.duration_minutes or 0 for a in activities
@@ -103,7 +123,10 @@ def generate_dashboard_html(db):
     monthly_chart = _generate_monthly_chart(monthly_counts, monthly_minutes)
     day_chart = _generate_day_of_week_chart(day_counts)
     type_chart = _generate_type_breakdown(type_counts)
-    recent_html = _generate_recent_activities(activities[:10])
+    # Filter activities to last 7 days for "This Week" section
+    seven_days_ago = _get_eastern_today() - timedelta(days=7)
+    recent_activities = [a for a in activities if a.activity_date >= seven_days_ago]
+    recent_html = _generate_recent_activities(recent_activities)
 
     # Build stat cards
     stat_cards = f'''
@@ -119,7 +142,7 @@ def generate_dashboard_html(db):
     <header class="mb-6" style="display: flex; justify-content: space-between; align-items: flex-start;">
         <div>
             <h1 class="md-headline-large mb-2">Training Dashboard</h1>
-            <p class="md-body-large text-secondary">{athlete_name} · Updated {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            <p class="md-body-large text-secondary">{athlete_name} · Updated {_get_eastern_now().strftime('%B %d, %Y at %I:%M %p')}</p>
         </div>
         <button id="sync-btn" class="sync-btn" onclick="runSync()" title="Sync data from Garmin & Hevy">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
@@ -197,7 +220,7 @@ def generate_dashboard_html(db):
         </div>
         <div class="md-card">
             <div class="md-card-header">
-                <h2 class="md-title-large">Recent Activity</h2>
+                <h2 class="md-title-large">This Week</h2>
             </div>
             <div class="md-card-content">
                 {recent_html}
@@ -494,7 +517,7 @@ def generate_dashboard_html(db):
 
 def _generate_calendar_heatmap(activity_by_date, min_date):
     """Generate GitHub-style calendar heatmap for the past year with click interaction."""
-    today = date.today()
+    today = _get_eastern_today()
     start_date = today - timedelta(days=365)
     start_date = start_date - timedelta(days=(start_date.weekday() + 1) % 7)
 
@@ -1055,7 +1078,7 @@ def _generate_type_breakdown(type_counts):
 def _generate_recent_activities(activities):
     """Generate recent activities list with expandable exercise details."""
     if not activities:
-        return '<p class="md-body-medium text-secondary">No recent activities</p>'
+        return '<p class="md-body-medium text-secondary">No activities this week</p>'
 
     items = []
     for idx, a in enumerate(activities):
