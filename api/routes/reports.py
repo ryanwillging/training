@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
+from api.timezone import get_eastern_today
 from database.base import get_db
 from database.models import Report, Athlete
 from analyst.report_generator import TrainingReportGenerator
@@ -66,7 +67,7 @@ def get_daily_report(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     else:
-        target_date = date.today()
+        target_date = get_eastern_today()
 
     # Verify athlete exists
     athlete = db.query(Athlete).filter(Athlete.id == athlete_id).first()
@@ -147,7 +148,7 @@ def get_weekly_report(
             )
     else:
         # Current week (ending Sunday)
-        today = date.today()
+        today = get_eastern_today()
         days_until_sunday = (6 - today.weekday()) % 7
         week_end = today + timedelta(days=days_until_sunday)
         week_start = week_end - timedelta(days=6)

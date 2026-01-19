@@ -7,6 +7,7 @@ from urllib.parse import urlparse, parse_qs
 from datetime import date, datetime, timedelta
 
 from api.design_system import wrap_page, get_base_css, get_nav_css
+from api.timezone import get_eastern_today
 
 # Database imports
 DB_AVAILABLE = False
@@ -84,11 +85,11 @@ class handler(BaseHTTPRequestHandler):
 
         # Daily report
         if path == "/api/reports/daily":
-            report_date_str = query.get("report_date", [str(date.today())])[0]
+            report_date_str = query.get("report_date", [str(get_eastern_today())])[0]
             try:
                 report_date = datetime.strptime(report_date_str, "%Y-%m-%d").date()
             except:
-                report_date = date.today()
+                report_date = get_eastern_today()
 
             db = get_db_session()
             if db:
@@ -274,7 +275,7 @@ class handler(BaseHTTPRequestHandler):
 
                     # Save each metric
                     saved = []
-                    metric_date = datetime.strptime(data.get('date', str(date.today())), "%Y-%m-%d").date()
+                    metric_date = datetime.strptime(data.get('date', str(get_eastern_today())), "%Y-%m-%d").date()
 
                     metric_fields = [
                         ('weight', 'weight_lbs', None),
@@ -413,7 +414,7 @@ class handler(BaseHTTPRequestHandler):
         days = 7  # Sync last 7 days
 
         results = {
-            "date": str(date.today()),
+            "date": str(get_eastern_today()),
             "athlete_id": athlete_id,
             "garmin_activities": None,
             "garmin_wellness": None,
@@ -529,7 +530,7 @@ class handler(BaseHTTPRequestHandler):
                 <div class="md-card-content">
                     <div class="md-form-group">
                         <label class="md-label" for="date">Date</label>
-                        <input class="md-input" type="date" id="date" name="date" value="{date.today()}" required>
+                        <input class="md-input" type="date" id="date" name="date" value="{get_eastern_today()}" required>
                     </div>
                 </div>
             </div>
@@ -701,7 +702,7 @@ class handler(BaseHTTPRequestHandler):
         """Get training statistics."""
         from database.models import CompletedActivity
 
-        today = date.today()
+        today = get_eastern_today()
         week_start = today - timedelta(days=today.weekday())
 
         activities = db.query(CompletedActivity).filter(
@@ -732,7 +733,7 @@ class handler(BaseHTTPRequestHandler):
         athlete = db.query(Athlete).first()
         athlete_name = athlete.name if athlete else "Athlete"
 
-        today = date.today()
+        today = get_eastern_today()
         # Week ends on Sunday
         days_until_sunday = (6 - today.weekday()) % 7
         week_end = today + timedelta(days=days_until_sunday)
@@ -863,7 +864,7 @@ class handler(BaseHTTPRequestHandler):
             }
 
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-        days_elapsed = (date.today() - start_date).days
+        days_elapsed = (get_eastern_today() - start_date).days
         current_week = min(max(1, (days_elapsed // 7) + 1), 24)
 
         # Get progress stats
@@ -903,7 +904,7 @@ class handler(BaseHTTPRequestHandler):
 
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
         if week_number is None:
-            days_elapsed = (date.today() - start_date).days
+            days_elapsed = (get_eastern_today() - start_date).days
             week_number = min(max(1, (days_elapsed // 7) + 1), 24)
 
         workouts = db.query(ScheduledWorkout).filter(
@@ -936,7 +937,7 @@ class handler(BaseHTTPRequestHandler):
         if not athlete:
             return []
 
-        today = date.today()
+        today = get_eastern_today()
         end_date = today + timedelta(days=days)
 
         workouts = db.query(ScheduledWorkout).filter(
@@ -972,7 +973,7 @@ class handler(BaseHTTPRequestHandler):
             "start_date": str(start_date),
             "total_weeks": 24,
             "test_weeks": [1, 12, 24],
-            "initialized_at": str(date.today())
+            "initialized_at": str(get_eastern_today())
         }
         athlete.goals = json.dumps(goals_data)
 
@@ -1213,7 +1214,7 @@ class handler(BaseHTTPRequestHandler):
         if not athlete:
             return self._no_db_html("Upcoming Workouts")
 
-        today = date.today()
+        today = get_eastern_today()
 
         # Get ALL future scheduled workouts
         workouts = db.query(ScheduledWorkout).filter(

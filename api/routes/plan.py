@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from typing import Optional
 from pydantic import BaseModel
 
+from api.timezone import get_eastern_today
 from database.base import SessionLocal
 from database.models import ScheduledWorkout
 from analyst.plan_manager import TrainingPlanManager
@@ -237,7 +238,7 @@ async def get_upcoming_workouts_page(days: int = Query(default=14, ge=1, le=30))
     db = SessionLocal()
 
     try:
-        today = date.today()
+        today = get_eastern_today()
         end_date = today + timedelta(days=days)
 
         # Get scheduled workouts

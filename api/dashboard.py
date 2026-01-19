@@ -4,30 +4,16 @@ Uses Material Design-inspired components for consistent styling.
 """
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 
 from api.design_system import wrap_page, get_stat_card, get_progress_card
+from api.timezone import get_eastern_now, get_eastern_today
 
 
-# Eastern timezone (UTC-5, or UTC-4 during DST)
-def _get_eastern_now():
-    """Get current datetime in Eastern time."""
-    # Use a fixed offset for EST (UTC-5). For proper DST handling,
-    # you'd need pytz or zoneinfo, but this works for most cases.
-    # Check if we're in DST (roughly March-November)
-    utc_now = datetime.now(timezone.utc)
-    month = utc_now.month
-    # Simple DST check: DST is roughly March 10 - November 3
-    is_dst = 3 <= month <= 10
-    offset = timedelta(hours=-4 if is_dst else -5)
-    eastern_tz = timezone(offset)
-    return utc_now.astimezone(eastern_tz)
-
-
-def _get_eastern_today():
-    """Get current date in Eastern time."""
-    return _get_eastern_now().date()
+# Aliases for internal use
+_get_eastern_now = get_eastern_now
+_get_eastern_today = get_eastern_today
 
 
 def generate_dashboard_html(db):

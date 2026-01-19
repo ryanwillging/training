@@ -14,6 +14,7 @@ from datetime import date
 from fastapi import APIRouter, HTTPException, Header, Request
 from typing import Optional
 
+from api.timezone import get_eastern_today
 from database.base import SessionLocal
 from integrations.garmin.activity_importer import GarminActivityImporter
 from integrations.garmin.wellness_importer import GarminWellnessImporter
@@ -72,7 +73,7 @@ async def cron_sync(
 
     db = SessionLocal()
     results = {
-        "date": str(date.today()),
+        "date": str(get_eastern_today()),
         "athlete_id": athlete_id,
         "days_synced": days,
         "garmin_activities": None,
