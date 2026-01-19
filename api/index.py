@@ -734,10 +734,9 @@ class handler(BaseHTTPRequestHandler):
         athlete_name = athlete.name if athlete else "Athlete"
 
         today = get_eastern_today()
-        # Week ends on Sunday
-        days_until_sunday = (6 - today.weekday()) % 7
-        week_end = today + timedelta(days=days_until_sunday)
-        week_start = week_end - timedelta(days=6)
+        # Rolling 7 days (today and previous 6 days)
+        week_end = today
+        week_start = today - timedelta(days=6)
 
         # Current week activities
         activities = db.query(CompletedActivity).filter(
