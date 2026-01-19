@@ -1,0 +1,18 @@
+# Dependencies for Vercel serverless Python functions
+# Note: Keep this in sync with root requirements.txt
+
+fastapi
+mangum
+python-dotenv>=1.0.0
+python-dateutil
+pytz
+
+# Database
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# OpenAI for AI evaluation
+openai>=1.0.0
+
+# HTTP requests
+requests
