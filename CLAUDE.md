@@ -75,7 +75,7 @@ training/
 
 ### Reports
 - `/api/reports/daily` - Daily training report (HTML)
-- `/api/reports/weekly` - Weekly training report (HTML)
+- `/api/reports/weekly` - Weekly training report (HTML, rolling 7 days)
 
 ### Data Import
 - `/api/import/garmin/activities` - Import Garmin activities
@@ -99,8 +99,10 @@ training/
 - `/api/plan/upcoming` - Upcoming scheduled workouts
 
 ### Cron
-- `/api/cron/sync` - Trigger data sync (POST, requires CRON_SECRET)
-- `/api/cron/sync/status` - Cron job status
+- `/api/cron/sync` - Trigger data sync (GET for Vercel Cron, POST for manual)
+  - Vercel Cron sends `x-vercel-cron` header (auto-authorized)
+  - Manual: `Authorization: Bearer $CRON_SECRET`
+- `/api/cron/sync/status` - Cron status with last run info (date, status, errors)
 
 ## Deployment Status
 **Target**: Fully autonomous operation on Vercel (no local dependencies)
@@ -123,6 +125,10 @@ Key SQLAlchemy models in `database/models.py`:
   - `scheduled_date`, `workout_type`, `week_number`
   - `garmin_workout_id`, `garmin_calendar_date` (Garmin sync tracking)
   - `status`: scheduled, completed, skipped, modified
+- **CronLog** - Tracks cron job executions
+  - `run_date`, `job_type`, `status` (success/partial/failed)
+  - `garmin_activities_imported`, `garmin_wellness_imported`, `hevy_imported`
+  - `errors_json`, `results_json`, `duration_seconds`
 
 Data sources:
 - **Hevy**: Strength training workouts and exercises
@@ -197,6 +203,22 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
    - Proposes modifications if needed
    - High-confidence, high-priority changes auto-applied
 
+### Cron Logging & Monitoring
+Each cron run is logged to the `CronLog` table with:
+- Timestamp, duration, and status (success/partial/failed)
+- Count of imported activities/wellness/workouts
+- Any errors encountered
+
+Check last run status:
+```bash
+curl https://training.ryanwillging.com/api/cron/sync/status
+```
+
+**Note**: Vercel serverless can't import `garminconnect`/`hevy-api-client`, so cron runs show "partial" status with import errors. Use local sync for full functionality:
+```bash
+python scripts/run_sync.py
+```
+
 ### Training Plan Structure
 - **24 weeks**, 3 phases + taper
 - **Test weeks**: 2, 12, 24 (400 TT)
@@ -234,7 +256,7 @@ cp .env.example .env
 vercel deploy --prod
 
 # Trigger manual data sync (production)
-curl -X POST https://training.ryanwillging.com/api/cron/sync \
+curl "https://training.ryanwillging.com/api/cron/sync" \
   -H "Authorization: Bearer $CRON_SECRET"
 
 # Check sync status (production)
