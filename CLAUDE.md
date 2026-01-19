@@ -15,6 +15,7 @@ training/
 │   ├── index.py           # Vercel serverless handler
 │   ├── navigation.py      # Shared navigation component (PAGES registry)
 │   ├── design_system.py   # Material Design CSS framework
+│   ├── timezone.py        # Eastern timezone utilities (use instead of datetime.now)
 │   ├── dashboard.py       # Dashboard HTML generation
 │   ├── schemas.py         # Pydantic schemas for API
 │   ├── routes/            # API route handlers
@@ -362,6 +363,16 @@ Some Garmin API endpoints return lists instead of dicts:
 - `body_battery` - List with `bodyBatteryValuesArray` inside each item
 
 The `wellness_importer.py` handles these variations.
+
+### Timezone Handling (`api/timezone.py`)
+All pages use Eastern time via the shared timezone module:
+```python
+from api.timezone import get_eastern_today, get_eastern_now
+
+today = get_eastern_today()  # Instead of date.today()
+now = get_eastern_now()      # Instead of datetime.now()
+```
+**Never use `date.today()` or `datetime.now()` directly** - Vercel runs in UTC.
 
 ## Design System (`api/design_system.py`)
 All HTML pages use a consistent Material Design-inspired CSS framework:
