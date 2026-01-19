@@ -504,7 +504,13 @@ def generate_dashboard_html(db):
 def _generate_calendar_heatmap(activity_by_date, min_date):
     """Generate GitHub-style calendar heatmap for the past year with click interaction."""
     today = _get_eastern_today()
-    start_date = today - timedelta(days=365)
+    # Start from the 1st of next month, 12 months ago (so all 12 months fit nicely)
+    # e.g., if today is Jan 19 2026, start from Feb 1 2025
+    if today.month == 12:
+        start_date = date(today.year, 1, 1)
+    else:
+        start_date = date(today.year - 1, today.month + 1, 1)
+    # Align to Sunday (start of week)
     start_date = start_date - timedelta(days=(start_date.weekday() + 1) % 7)
 
     weeks_html = []
@@ -569,12 +575,9 @@ def _generate_calendar_heatmap(activity_by_date, min_date):
                 week_days.append(f'<div class="{" ".join(css_classes)}" data-date="{date_str}" title="{title}"></div>')
 
                 # Add month label at the first occurrence of each month
-                # but only if there's enough space from the previous label (at least 3 weeks)
                 if current_date.month != last_month:
                     last_month = current_date.month
-                    # Only add label if enough space from previous
-                    if not month_labels or (week_idx - month_labels[-1][0]) >= 3:
-                        month_labels.append((week_idx, current_date.strftime('%b')))
+                    month_labels.append((week_idx, current_date.strftime('%b')))
             else:
                 week_days.append('<div class="calendar-day" style="visibility:hidden;"></div>')
             current_date += timedelta(days=1)
