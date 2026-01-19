@@ -12,13 +12,23 @@ from sqlalchemy.orm import Session
 from analyst.plan_parser import PlanParser, Workout, WorkoutType, TrainingPlan
 from analyst.workout_scheduler import WorkoutScheduler, PlanAdjuster
 from analyst.chatgpt_evaluator import ChatGPTEvaluator, PlanEvaluation, PlanModification
-from integrations.garmin.workout_manager import (
-    GarminWorkoutManager, GarminWorkout, WorkoutSportType
-)
 from database.models import (
     Athlete, DailyWellness, ScheduledWorkout, DailyReview, Goal, GoalProgress,
     CompletedActivity, WorkoutAnalysis
 )
+
+# Lazy import for Garmin - not available in Vercel serverless
+GARMIN_AVAILABLE = False
+GarminWorkoutManager = None
+GarminWorkout = None
+WorkoutSportType = None
+try:
+    from integrations.garmin.workout_manager import (
+        GarminWorkoutManager, GarminWorkout, WorkoutSportType
+    )
+    GARMIN_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class TrainingPlanManager:
@@ -43,8 +53,10 @@ class TrainingPlanManager:
         self._ai_evaluator: Optional[ChatGPTEvaluator] = None
 
     @property
-    def garmin_manager(self) -> GarminWorkoutManager:
-        """Lazy load Garmin workout manager."""
+    def garmin_manager(self) -> Optional["GarminWorkoutManager"]:
+        """Lazy load Garmin workout manager. Returns None if not available."""
+        if not GARMIN_AVAILABLE:
+            return None
         if self._garmin_manager is None:
             self._garmin_manager = GarminWorkoutManager()
         return self._garmin_manager
@@ -126,6 +138,13 @@ class TrainingPlanManager:
             "skipped": []
         }
 
+        # Check if Garmin integration is available
+        if not GARMIN_AVAILABLE or self.garmin_manager is None:
+            results["failed"].append({
+                "error": "Garmin integration not available in serverless environment"
+            })
+            return results
+
         # Get workouts to sync
         if week_number:
             workouts = self.db.query(ScheduledWorkout).filter(
@@ -185,8 +204,11 @@ class TrainingPlanManager:
 
         return results
 
-    def _create_garmin_workout(self, scheduled: ScheduledWorkout) -> Optional[GarminWorkout]:
+    def _create_garmin_workout(self, scheduled: ScheduledWorkout) -> Optional["GarminWorkout"]:
         """Convert a scheduled workout to Garmin format."""
+        if not GARMIN_AVAILABLE or self.garmin_manager is None:
+            return None
+
         workout_data = json.loads(scheduled.workout_data_json) if scheduled.workout_data_json else {}
 
         if scheduled.workout_type in ["swim_a", "swim_b", "swim_test"]:
@@ -529,6 +551,14 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
             "garmin_synced": [],
             "garmin_failed": []
         }
+
+        # Check if Garmin is available
+        if sync_to_garmin and not GARMIN_AVAILABLE:
+            results["garmin_failed"].append({
+                "action": "skip_all",
+                "error": "Garmin integration not available in serverless environment"
+            })
+            sync_to_garmin = False  # Disable Garmin sync for this run
 
         for mod in modifications:
             mod_type = mod.get("type", "unknown")
