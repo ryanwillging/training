@@ -19,9 +19,13 @@ def generate_dashboard_html(db):
     athlete = db.query(Athlete).first()
 
     # Get latest wellness data (today or most recent)
-    wellness = db.query(DailyWellness).order_by(
-        DailyWellness.date.desc()
-    ).first()
+    # Handle case where daily_wellness table doesn't exist yet
+    try:
+        wellness = db.query(DailyWellness).order_by(
+            DailyWellness.date.desc()
+        ).first()
+    except Exception:
+        wellness = None
     athlete_name = athlete.name if athlete else "Athlete"
     goals = json.loads(athlete.goals) if athlete and athlete.goals else {}
 
