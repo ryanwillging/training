@@ -342,25 +342,42 @@ class TrainingPlanManager:
         return results
 
     def _store_failed_evaluation(self, user_context: Optional[str], error_msg: str) -> None:
-        """Store a record of a failed evaluation attempt."""
+        """Store a record of a failed evaluation attempt. Updates existing if present."""
         try:
-            review = DailyReview(
-                athlete_id=self.athlete_id,
-                review_date=date.today(),
-                progress_summary=json.dumps({
-                    "overall_assessment": "error",
-                    "error": error_msg
-                }),
-                insights=f"Evaluation failed: {error_msg}",
-                proposed_adjustments=json.dumps([]),
-                approval_status="error",
-                user_context=user_context
-            )
-            self.db.add(review)
+            today = date.today()
+            progress_summary = json.dumps({
+                "overall_assessment": "error",
+                "error": error_msg
+            })
+
+            # Check for existing review today
+            existing = self.db.query(DailyReview).filter(
+                DailyReview.athlete_id == self.athlete_id,
+                DailyReview.review_date == today
+            ).first()
+
+            if existing:
+                existing.progress_summary = progress_summary
+                existing.insights = f"Evaluation failed: {error_msg}"
+                existing.proposed_adjustments = json.dumps([])
+                existing.approval_status = "error"
+                existing.user_context = user_context
+            else:
+                review = DailyReview(
+                    athlete_id=self.athlete_id,
+                    review_date=today,
+                    progress_summary=progress_summary,
+                    insights=f"Evaluation failed: {error_msg}",
+                    proposed_adjustments=json.dumps([]),
+                    approval_status="error",
+                    user_context=user_context
+                )
+                self.db.add(review)
+
             self.db.commit()
         except Exception:
             # If we can't store the error, just log it
-            pass
+            self.db.rollback()
 
     def _get_recent_wellness(self, days: int) -> Dict[str, Any]:
         """Get averaged wellness data for the past N days."""
@@ -474,31 +491,53 @@ Weekly Structure: Swim A (Mon), Lift A (Tue), VO2 (Wed), Swim B (Thu), Lift B (F
 Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
 
     def _store_daily_review(self, evaluation: PlanEvaluation, user_context: Optional[str] = None) -> None:
-        """Store the evaluation in the daily_reviews table."""
-        review = DailyReview(
-            athlete_id=self.athlete_id,
-            review_date=date.today(),
-            progress_summary=json.dumps({
-                "overall_assessment": evaluation.overall_assessment,
-                "confidence_score": evaluation.confidence_score
-            }),
-            insights=evaluation.progress_summary,
-            recommendations=evaluation.next_week_focus,
-            proposed_adjustments=json.dumps([
-                {
-                    "type": m.modification_type,
-                    "week": m.week_number,
-                    "description": m.description,
-                    "reason": m.reason,
-                    "priority": m.priority
-                }
-                for m in evaluation.modifications
-            ]),
-            approval_status="pending" if evaluation.modifications else "no_changes_needed",
-            user_context=user_context  # Store user-provided notes
-        )
+        """Store the evaluation in the daily_reviews table. Updates existing if present."""
+        today = date.today()
 
-        self.db.add(review)
+        # Check for existing review today
+        existing = self.db.query(DailyReview).filter(
+            DailyReview.athlete_id == self.athlete_id,
+            DailyReview.review_date == today
+        ).first()
+
+        progress_summary = json.dumps({
+            "overall_assessment": evaluation.overall_assessment,
+            "confidence_score": evaluation.confidence_score
+        })
+        proposed_adjustments = json.dumps([
+            {
+                "type": m.modification_type,
+                "week": m.week_number,
+                "description": m.description,
+                "reason": m.reason,
+                "priority": m.priority
+            }
+            for m in evaluation.modifications
+        ])
+        approval_status = "pending" if evaluation.modifications else "no_changes_needed"
+
+        if existing:
+            # Update existing review
+            existing.progress_summary = progress_summary
+            existing.insights = evaluation.progress_summary
+            existing.recommendations = evaluation.next_week_focus
+            existing.proposed_adjustments = proposed_adjustments
+            existing.approval_status = approval_status
+            existing.user_context = user_context
+        else:
+            # Create new review
+            review = DailyReview(
+                athlete_id=self.athlete_id,
+                review_date=today,
+                progress_summary=progress_summary,
+                insights=evaluation.progress_summary,
+                recommendations=evaluation.next_week_focus,
+                proposed_adjustments=proposed_adjustments,
+                approval_status=approval_status,
+                user_context=user_context
+            )
+            self.db.add(review)
+
         self.db.commit()
 
     def _apply_modification(self, modification: PlanModification) -> bool:
