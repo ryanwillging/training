@@ -233,6 +233,19 @@ class handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # Dashboard sync (no auth required)
+        if path == "/api/sync":
+            db = get_db_session()
+            if not db:
+                return self.send_json(400, {"error": "Database not configured"})
+            try:
+                results = self._run_sync(db)
+                db.close()
+                return self.send_json(200, results)
+            except Exception as e:
+                db.close()
+                return self.send_json(500, {"error": str(e)})
+
         # Save metrics
         if path == "/api/metrics/save":
             content_length = int(self.headers.get('Content-Length', 0))
@@ -305,13 +318,24 @@ class handler(BaseHTTPRequestHandler):
                     return self.send_json(500, {"error": str(e)})
             return self.send_json(400, {"error": "Database not configured"})
 
-        # Cron sync
+        # Cron sync - actually runs the sync
         if path == "/api/cron/sync":
             auth = self.headers.get("Authorization", "")
             cron_secret = os.environ.get("CRON_SECRET", "")
             if cron_secret and not auth.endswith(cron_secret):
                 return self.send_json(401, {"error": "Unauthorized"})
-            return self.send_json(200, {"status": "success", "message": "Sync endpoint ready"})
+
+            db = get_db_session()
+            if not db:
+                return self.send_json(400, {"error": "Database not configured"})
+
+            try:
+                results = self._run_sync(db)
+                db.close()
+                return self.send_json(200, results)
+            except Exception as e:
+                db.close()
+                return self.send_json(500, {"error": str(e)})
 
         # Plan initialize
         if path == "/api/plan/initialize":
@@ -382,6 +406,68 @@ class handler(BaseHTTPRequestHandler):
         </div>
         '''
         return wrap_page(content, title, None)
+
+    def _run_sync(self, db):
+        """Run data sync from Garmin and Hevy."""
+        from database.base import Base, engine
+        from database.models import DailyWellness
+
+        athlete_id = int(os.environ.get("ATHLETE_ID", "1"))
+        days = 7  # Sync last 7 days
+
+        results = {
+            "date": str(date.today()),
+            "athlete_id": athlete_id,
+            "garmin_activities": None,
+            "garmin_wellness": None,
+            "hevy": None,
+            "errors": []
+        }
+
+        # Ensure all tables exist (creates daily_wellness if missing)
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            results["errors"].append(f"Table creation: {str(e)}")
+
+        # Sync Garmin activities
+        try:
+            from integrations.garmin.activity_importer import GarminActivityImporter
+            garmin = GarminActivityImporter(db, athlete_id)
+            imported, skipped, errors = garmin.import_recent_activities(days)
+            results["garmin_activities"] = {"imported": imported, "skipped": skipped}
+            if errors:
+                results["errors"].extend(errors)
+        except Exception as e:
+            results["garmin_activities"] = {"error": str(e)}
+            results["errors"].append(f"Garmin activities: {str(e)}")
+
+        # Sync Garmin wellness data
+        try:
+            from integrations.garmin.wellness_importer import GarminWellnessImporter
+            wellness = GarminWellnessImporter(db, athlete_id)
+            imported, updated, errors = wellness.import_recent_wellness(days)
+            results["garmin_wellness"] = {"imported": imported, "updated": updated}
+            if errors:
+                results["errors"].extend(errors)
+        except Exception as e:
+            results["garmin_wellness"] = {"error": str(e)}
+            results["errors"].append(f"Garmin wellness: {str(e)}")
+
+        # Sync Hevy workouts
+        try:
+            from integrations.hevy.activity_importer import HevyActivityImporter
+            hevy = HevyActivityImporter(db, athlete_id)
+            imported, skipped, errors = hevy.import_recent_workouts(days)
+            results["hevy"] = {"imported": imported, "skipped": skipped}
+            if errors:
+                results["errors"].extend(errors)
+        except Exception as e:
+            results["hevy"] = {"error": str(e)}
+            results["errors"].append(f"Hevy: {str(e)}")
+
+        results["status"] = "completed" if not results["errors"] else "completed_with_errors"
+        return results
 
     def _generate_metrics_form(self, db):
         """Generate metrics input form using Material Design."""

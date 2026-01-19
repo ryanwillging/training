@@ -116,9 +116,16 @@ def generate_dashboard_html(db):
     '''
 
     content = f'''
-    <header class="mb-6">
-        <h1 class="md-headline-large mb-2">Training Dashboard</h1>
-        <p class="md-body-large text-secondary">{athlete_name} · Updated {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+    <header class="mb-6" style="display: flex; justify-content: space-between; align-items: flex-start;">
+        <div>
+            <h1 class="md-headline-large mb-2">Training Dashboard</h1>
+            <p class="md-body-large text-secondary">{athlete_name} · Updated {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+        </div>
+        <button id="sync-btn" class="sync-btn" onclick="runSync()" title="Sync data from Garmin & Hevy">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+        </button>
     </header>
 
     {wellness_html}
@@ -199,6 +206,52 @@ def generate_dashboard_html(db):
     </div>
 
     <style>
+        /* Sync button styles */
+        .sync-btn {{
+            background: var(--md-surface-variant);
+            border: 1px solid var(--md-outline-variant);
+            border-radius: var(--radius-full);
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            color: var(--md-on-surface-variant);
+            transition: all var(--transition-fast);
+        }}
+        .sync-btn:hover {{
+            background: var(--md-primary);
+            color: var(--md-on-primary);
+            border-color: var(--md-primary);
+        }}
+        .sync-btn:disabled {{
+            opacity: 0.5;
+            cursor: not-allowed;
+        }}
+        .sync-btn.syncing svg {{
+            animation: spin 1s linear infinite;
+        }}
+        @keyframes spin {{
+            from {{ transform: rotate(0deg); }}
+            to {{ transform: rotate(360deg); }}
+        }}
+        .sync-toast {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--md-surface);
+            border: 1px solid var(--md-outline-variant);
+            border-radius: var(--radius-md);
+            padding: 12px 20px;
+            box-shadow: var(--md-elevation-3);
+            z-index: 1000;
+            display: none;
+        }}
+        .sync-toast.show {{ display: block; }}
+        .sync-toast.success {{ border-left: 4px solid var(--md-success); }}
+        .sync-toast.error {{ border-left: 4px solid var(--md-error); }}
+
         /* Calendar-specific styles */
         .calendar-container {{
             display: grid;
@@ -399,6 +452,41 @@ def generate_dashboard_html(db):
             justify-content: space-between;
         }}
     </style>
+
+    <div id="sync-toast" class="sync-toast"></div>
+
+    <script>
+    async function runSync() {{
+        const btn = document.getElementById('sync-btn');
+        const toast = document.getElementById('sync-toast');
+
+        btn.disabled = true;
+        btn.classList.add('syncing');
+
+        try {{
+            const response = await fetch('/api/sync', {{ method: 'POST' }});
+            const data = await response.json();
+
+            if (response.ok) {{
+                toast.className = 'sync-toast show success';
+                const imported = (data.garmin_activities?.imported || 0) +
+                                 (data.garmin_wellness?.imported || 0) +
+                                 (data.hevy?.imported || 0);
+                toast.innerHTML = '✓ Sync complete! ' + imported + ' items imported. Refreshing...';
+                setTimeout(() => window.location.reload(), 2000);
+            }} else {{
+                throw new Error(data.error || 'Sync failed');
+            }}
+        }} catch (error) {{
+            toast.className = 'sync-toast show error';
+            toast.innerHTML = '✗ ' + error.message;
+            setTimeout(() => toast.classList.remove('show'), 5000);
+        }}
+
+        btn.disabled = false;
+        btn.classList.remove('syncing');
+    }}
+    </script>
     '''
 
     return wrap_page(content, "Dashboard", "/dashboard")
