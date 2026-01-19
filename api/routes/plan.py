@@ -926,6 +926,17 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
             </div>
             '''
 
+        # Show user context if provided
+        user_context_html = ""
+        if review.user_context:
+            user_context_html = f'''
+            <div class="user-context-section">
+                <span class="context-icon">💬</span>
+                <span class="context-label">Your notes:</span>
+                <span class="context-text">{review.user_context}</span>
+            </div>
+            '''
+
         cards_html += f'''
         <div class="review-card {'pending' if status == 'pending' else ''}">
             <div class="review-header">
@@ -943,6 +954,7 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
                     {f'<span class="confidence-badge">{int(confidence * 100)}% confidence</span>' if confidence else ''}
                 </div>
             </div>
+            {user_context_html}
 
             <div class="review-body">
                 {f'<div class="review-insights"><h4>Insights</h4><p>{review.insights}</p></div>' if review.insights else ''}
@@ -1226,6 +1238,19 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
             color: var(--md-on-surface-variant);
             border: 1px solid var(--md-outline-variant);
         }}
+
+        .user-context-section {{
+            padding: 12px 20px;
+            background: #f3e5f5;
+            border-bottom: 1px solid var(--md-outline-variant);
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            font-size: 14px;
+        }}
+        .context-icon {{ font-size: 16px; }}
+        .context-label {{ font-weight: 600; color: #7b1fa2; white-space: nowrap; }}
+        .context-text {{ color: #4a148c; line-height: 1.4; }}
 
         .review-body {{
             padding: 20px;
