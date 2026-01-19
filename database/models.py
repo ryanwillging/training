@@ -611,3 +611,37 @@ class WorkoutAnalysis(Base):
 
     def __repr__(self):
         return f"<WorkoutAnalysis(date={self.analysis_date}, alignment={self.overall_alignment_score})>"
+
+
+class CronLog(Base):
+    """
+    Log of cron job runs for tracking and debugging.
+    """
+
+    __tablename__ = "cron_logs"
+    __table_args__ = (
+        Index("idx_cron_log_date", "run_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_date = Column(DateTime, nullable=False)
+    job_type = Column(String, nullable=False)  # 'sync', 'evaluation', etc.
+    status = Column(String, nullable=False)  # 'success', 'failed', 'partial'
+
+    # Results summary
+    garmin_activities_imported = Column(Integer, default=0)
+    garmin_wellness_imported = Column(Integer, default=0)
+    hevy_imported = Column(Integer, default=0)
+
+    # Error tracking
+    errors_json = Column(Text)  # JSON list of error messages
+
+    # Full results for debugging
+    results_json = Column(Text)  # Full JSON response
+
+    # Timing
+    duration_seconds = Column(Float)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<CronLog(date={self.run_date}, type='{self.job_type}', status='{self.status}')>"

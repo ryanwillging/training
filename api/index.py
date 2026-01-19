@@ -169,11 +169,36 @@ class handler(BaseHTTPRequestHandler):
 
         # Cron status
         if path == "/api/cron/sync/status":
-            return self.send_json(200, {
+            status_info = {
                 "endpoint": "/api/cron/sync",
                 "schedule": "0 5 * * * (5:00 UTC daily)",
-                "status": "configured"
-            })
+                "status": "configured",
+                "last_run": None
+            }
+            # Try to get last run from database
+            db = get_db_session()
+            if db:
+                try:
+                    from database.models import CronLog
+                    last_run = db.query(CronLog).order_by(CronLog.run_date.desc()).first()
+                    if last_run:
+                        status_info["last_run"] = {
+                            "date": last_run.run_date.isoformat() if last_run.run_date else None,
+                            "status": last_run.status,
+                            "duration_seconds": last_run.duration_seconds,
+                            "garmin_activities": last_run.garmin_activities_imported,
+                            "garmin_wellness": last_run.garmin_wellness_imported,
+                            "hevy": last_run.hevy_imported,
+                            "errors": json.loads(last_run.errors_json) if last_run.errors_json else []
+                        }
+                    db.close()
+                except Exception as e:
+                    status_info["last_run_error"] = str(e)
+                    try:
+                        db.close()
+                    except:
+                        pass
+            return self.send_json(200, status_info)
 
         # Plan status
         if path == "/api/plan/status":
@@ -321,9 +346,19 @@ class handler(BaseHTTPRequestHandler):
 
         # Cron sync - actually runs the sync
         if path == "/api/cron/sync":
+            # Check for Vercel Cron header OR Authorization Bearer token
+            vercel_cron = self.headers.get("x-vercel-cron")
             auth = self.headers.get("Authorization", "")
             cron_secret = os.environ.get("CRON_SECRET", "")
-            if cron_secret and not auth.endswith(cron_secret):
+
+            # Allow if: Vercel cron header present, OR valid Bearer token, OR no secret configured
+            is_authorized = (
+                vercel_cron or
+                (cron_secret and auth.endswith(cron_secret)) or
+                not cron_secret
+            )
+
+            if not is_authorized:
                 return self.send_json(401, {"error": "Unauthorized"})
 
             db = get_db_session()
@@ -331,7 +366,14 @@ class handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": "Database not configured"})
 
             try:
+                import time as time_module
+                start_time = time_module.time()
                 results = self._run_sync(db)
+                duration = time_module.time() - start_time
+
+                # Log the cron run
+                self._log_cron_run(db, results, duration)
+
                 db.close()
                 return self.send_json(200, results)
             except Exception as e:
@@ -407,6 +449,39 @@ class handler(BaseHTTPRequestHandler):
         </div>
         '''
         return wrap_page(content, title, None)
+
+    def _log_cron_run(self, db, results, duration):
+        """Log cron run to database for tracking."""
+        try:
+            from database.models import CronLog
+            from api.timezone import get_eastern_now
+
+            # Determine status
+            errors = results.get("errors", [])
+            if not errors:
+                status = "success"
+            elif results.get("status") == "completed_with_errors":
+                status = "partial"
+            else:
+                status = "failed"
+
+            log = CronLog(
+                run_date=get_eastern_now(),
+                job_type="sync",
+                status=status,
+                garmin_activities_imported=results.get("garmin_activities", {}).get("imported", 0) if isinstance(results.get("garmin_activities"), dict) else 0,
+                garmin_wellness_imported=results.get("garmin_wellness", {}).get("imported", 0) if isinstance(results.get("garmin_wellness"), dict) else 0,
+                hevy_imported=results.get("hevy", {}).get("imported", 0) if isinstance(results.get("hevy"), dict) else 0,
+                errors_json=json.dumps(errors) if errors else None,
+                results_json=json.dumps(results, default=str),
+                duration_seconds=duration
+            )
+            db.add(log)
+            db.commit()
+        except Exception as e:
+            # Don't fail the sync if logging fails
+            print(f"Failed to log cron run: {e}")
+            db.rollback()
 
     def _run_sync(self, db):
         """Run data sync from Garmin and Hevy."""
