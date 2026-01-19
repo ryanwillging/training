@@ -49,8 +49,6 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     from api.dashboard import generate_dashboard_html
                     html = generate_dashboard_html(db)
-                    # Add deployment marker (v2)
-                    html = html.replace('<header', '<!-- DEPLOY_V2 --><header')
                     db.close()
                     return self.send_html(html)
                 except Exception as e:

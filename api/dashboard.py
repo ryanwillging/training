@@ -89,10 +89,7 @@ def generate_dashboard_html(db):
         weekly_hours.append((week_start, week_minutes / 60))
 
     # Generate wellness metrics section
-    try:
-        wellness_html = _generate_wellness_section(wellness)
-    except Exception as e:
-        wellness_html = f'<div class="md-card mb-6"><div class="md-card-content"><p class="md-body-medium">Wellness error: {str(e)}</p></div></div>'
+    wellness_html = _generate_wellness_section(wellness)
 
     # Generate HTML sections
     calendar_html = _generate_calendar_heatmap(activity_by_date, min_date)
@@ -113,8 +110,7 @@ def generate_dashboard_html(db):
     </div>
     '''
 
-    wellness_debug = f"<!-- wellness_html length: {len(wellness_html)} -->"
-    content = f'''{wellness_debug}
+    content = f'''
     <header class="mb-6">
         <h1 class="md-headline-large mb-2">Training Dashboard</h1>
         <p class="md-body-large text-secondary">{athlete_name} · Updated {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
@@ -592,9 +588,6 @@ def _generate_wellness_section(wellness):
         </div>
         '''
 
-    # Debug: show that wellness record exists
-    debug_info = f"<!-- Wellness record found: date={wellness.date}, readiness={wellness.training_readiness_score}, sleep={wellness.sleep_score} -->"
-
     # Training Readiness
     readiness_score = wellness.training_readiness_score or 0
     readiness_status = wellness.training_readiness_status or "Unknown"
@@ -626,7 +619,7 @@ def _generate_wellness_section(wellness):
     # Date for display
     wellness_date = wellness.date.strftime('%A, %B %d') if wellness.date else "Today"
 
-    return f'''{debug_info}
+    return f'''
     <div class="wellness-metrics mb-6">
         <div class="wellness-header">
             <span class="wellness-date">{wellness_date}</span>
