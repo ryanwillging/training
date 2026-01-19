@@ -253,6 +253,42 @@ class handler(BaseHTTPRequestHandler):
                     return self.send_json(500, {"error": str(e)})
             return self.send_html(self._no_db_html("Upcoming Workouts"))
 
+        # Cron sync via GET (Vercel Cron uses GET requests)
+        if path == "/api/cron/sync":
+            # Check for Vercel Cron header OR Authorization Bearer token
+            vercel_cron = self.headers.get("x-vercel-cron")
+            auth = self.headers.get("Authorization", "")
+            cron_secret = os.environ.get("CRON_SECRET", "")
+
+            # Allow if: Vercel cron header present, OR valid Bearer token, OR no secret configured
+            is_authorized = (
+                vercel_cron or
+                (cron_secret and auth.endswith(cron_secret)) or
+                not cron_secret
+            )
+
+            if not is_authorized:
+                return self.send_json(401, {"error": "Unauthorized"})
+
+            db = get_db_session()
+            if not db:
+                return self.send_json(400, {"error": "Database not configured"})
+
+            try:
+                import time as time_module
+                start_time = time_module.time()
+                results = self._run_sync(db)
+                duration = time_module.time() - start_time
+
+                # Log the cron run
+                self._log_cron_run(db, results, duration)
+
+                db.close()
+                return self.send_json(200, results)
+            except Exception as e:
+                db.close()
+                return self.send_json(500, {"error": str(e)})
+
         return self.send_json(404, {"error": "Not found", "path": path})
 
     def do_POST(self):
