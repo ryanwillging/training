@@ -568,9 +568,13 @@ def _generate_calendar_heatmap(activity_by_date, min_date):
 
                 week_days.append(f'<div class="{" ".join(css_classes)}" data-date="{date_str}" title="{title}"></div>')
 
+                # Add month label at the first occurrence of each month
+                # but only if there's enough space from the previous label (at least 3 weeks)
                 if current_date.month != last_month:
-                    month_labels.append((week_idx, current_date.strftime('%b')))
                     last_month = current_date.month
+                    # Only add label if enough space from previous
+                    if not month_labels or (week_idx - month_labels[-1][0]) >= 3:
+                        month_labels.append((week_idx, current_date.strftime('%b')))
             else:
                 week_days.append('<div class="calendar-day" style="visibility:hidden;"></div>')
             current_date += timedelta(days=1)
