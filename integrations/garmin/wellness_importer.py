@@ -101,20 +101,28 @@ class GarminWellnessImporter:
             data["sleep_rem_seconds"] = daily_sleep.get("remSleepSeconds")
             data["sleep_awake_seconds"] = daily_sleep.get("awakeSleepSeconds")
 
-        # Body battery
+        # Body battery (list with daily summaries containing bodyBatteryValuesArray)
         if body_battery and isinstance(body_battery, list) and len(body_battery) > 0:
-            bb_values = [b.get("bodyBatteryLevel", 0) for b in body_battery if b.get("bodyBatteryLevel")]
-            if bb_values:
-                data["body_battery_high"] = max(bb_values)
-                data["body_battery_low"] = min(bb_values)
-            charged = [b.get("bodyBatteryChargedValue", 0) for b in body_battery if b.get("bodyBatteryChargedValue")]
-            if charged:
-                data["body_battery_charged"] = sum(charged)
+            bb_day = body_battery[0]  # Get today's data
+            if isinstance(bb_day, dict):
+                # Extract values from bodyBatteryValuesArray [[timestamp, level], ...]
+                values_array = bb_day.get("bodyBatteryValuesArray", [])
+                if values_array:
+                    bb_values = [v[1] for v in values_array if isinstance(v, list) and len(v) > 1]
+                    if bb_values:
+                        data["body_battery_high"] = max(bb_values)
+                        data["body_battery_low"] = min(bb_values)
+                # Get charged value directly from summary
+                data["body_battery_charged"] = bb_day.get("charged")
 
-        # Training readiness
+        # Training readiness (may be a list)
         if training_readiness:
-            data["training_readiness_score"] = training_readiness.get("score")
-            data["training_readiness_status"] = training_readiness.get("level")
+            tr = training_readiness
+            if isinstance(training_readiness, list) and len(training_readiness) > 0:
+                tr = training_readiness[0]  # Use most recent
+            if isinstance(tr, dict):
+                data["training_readiness_score"] = tr.get("score")
+                data["training_readiness_status"] = tr.get("level")
 
         # Stress
         if stress:
@@ -142,9 +150,14 @@ class GarminWellnessImporter:
         if spo2:
             data["avg_spo2"] = spo2.get("avgSleepSpo2") or spo2.get("latestSpo2Value")
 
-        # Steps and activity
+        # Steps and activity (steps may be a list of intervals)
         if steps:
-            data["steps"] = steps.get("totalSteps")
+            if isinstance(steps, list):
+                # Sum steps from all intervals
+                total_steps = sum(s.get("steps", 0) for s in steps if isinstance(s, dict))
+                data["steps"] = total_steps if total_steps > 0 else None
+            elif isinstance(steps, dict):
+                data["steps"] = steps.get("totalSteps")
         if user_summary:
             data["steps"] = data.get("steps") or user_summary.get("totalSteps")
             data["floors_climbed"] = user_summary.get("floorsAscended")
@@ -156,12 +169,16 @@ class GarminWellnessImporter:
             data["training_status"] = training_status.get("trainingStatusPhrase") or training_status.get("status")
             data["training_load"] = training_status.get("currentLoad")
 
-        # Max metrics (VO2 max)
+        # Max metrics (VO2 max) - may be a list or dict
         if max_metrics:
-            generic = max_metrics.get("generic", {})
-            data["vo2_max_running"] = generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")
-            cycling = max_metrics.get("cycling", {})
-            data["vo2_max_cycling"] = cycling.get("vo2MaxPreciseValue") or cycling.get("vo2MaxValue")
+            mm = max_metrics
+            if isinstance(max_metrics, list) and len(max_metrics) > 0:
+                mm = max_metrics[0]  # Use first item
+            if isinstance(mm, dict):
+                generic = mm.get("generic", {})
+                data["vo2_max_running"] = generic.get("vo2MaxPreciseValue") or generic.get("vo2MaxValue")
+                cycling = mm.get("cycling", {})
+                data["vo2_max_cycling"] = cycling.get("vo2MaxPreciseValue") or cycling.get("vo2MaxValue")
 
         # Store raw data for future use
         raw_data = {
