@@ -147,11 +147,10 @@ def get_weekly_report(
                 detail="Invalid week format. Use YYYY-WNN (e.g., 2026-W02)"
             )
     else:
-        # Current week (ending Sunday)
+        # Rolling 7 days (today and previous 6 days)
         today = get_eastern_today()
-        days_until_sunday = (6 - today.weekday()) % 7
-        week_end = today + timedelta(days=days_until_sunday)
-        week_start = week_end - timedelta(days=6)
+        week_end = today
+        week_start = today - timedelta(days=6)
 
     # Verify athlete exists
     athlete = db.query(Athlete).filter(Athlete.id == athlete_id).first()
