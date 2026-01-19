@@ -25,6 +25,7 @@ def generate_dashboard_html(db):
             DailyWellness.date.desc()
         ).first()
     except Exception:
+        db.rollback()  # Rollback failed transaction so subsequent queries work
         wellness = None
     athlete_name = athlete.name if athlete else "Athlete"
     goals = json.loads(athlete.goals) if athlete and athlete.goals else {}
