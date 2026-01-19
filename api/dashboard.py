@@ -691,11 +691,13 @@ def _generate_wellness_section(wellness):
     sleep_hours = (wellness.sleep_duration_seconds or 0) / 3600
     sleep_color = _get_score_color(sleep_score)
 
-    # Body Battery
+    # Body Battery - use current (most recent) value, fall back to high
+    bb_current = wellness.body_battery_current or wellness.body_battery_high or 0
     bb_high = wellness.body_battery_high or 0
     bb_low = wellness.body_battery_low or 0
     bb_charged = wellness.body_battery_charged or 0
-    bb_color = _get_score_color(bb_high)
+    bb_drained = getattr(wellness, 'body_battery_drained', None) or 0
+    bb_color = _get_score_color(bb_current)
 
     # Stress
     stress_level = wellness.avg_stress_level or 0
@@ -772,14 +774,14 @@ def _generate_wellness_section(wellness):
                     <svg viewBox="0 0 100 100" class="gauge-svg">
                         <circle class="gauge-bg" cx="50" cy="50" r="42" />
                         <circle class="gauge-fill" cx="50" cy="50" r="42"
-                            style="stroke: {bb_color}; stroke-dasharray: {bb_high * 2.64} 264;" />
+                            style="stroke: {bb_color}; stroke-dasharray: {bb_current * 2.64} 264;" />
                     </svg>
                     <div class="gauge-value">
-                        <span class="gauge-number">{bb_high}</span>
+                        <span class="gauge-number">{bb_current}</span>
                     </div>
                 </div>
                 <div class="wellness-label">Body Battery</div>
-                <div class="wellness-sublabel">Low: {bb_low} · Charged: +{bb_charged}</div>
+                <div class="wellness-sublabel">+{bb_charged} charged · -{bb_drained} drained</div>
             </div>
 
             <!-- Stress -->

@@ -379,7 +379,9 @@ class DailyWellness(Base):
     # Recovery & readiness
     body_battery_high = Column(Integer)  # Highest value of day
     body_battery_low = Column(Integer)   # Lowest value of day
+    body_battery_current = Column(Integer)  # Most recent reading
     body_battery_charged = Column(Integer)  # Amount charged overnight
+    body_battery_drained = Column(Integer)  # Amount drained during day
     training_readiness_score = Column(Integer)  # 0-100
     training_readiness_status = Column(String)  # 'OPTIMAL', 'PRIME', 'PRIMED', etc.
 

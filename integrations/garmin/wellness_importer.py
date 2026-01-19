@@ -112,8 +112,11 @@ class GarminWellnessImporter:
                     if bb_values:
                         data["body_battery_high"] = max(bb_values)
                         data["body_battery_low"] = min(bb_values)
-                # Get charged value directly from summary
+                        # Current is the most recent reading (last in array)
+                        data["body_battery_current"] = bb_values[-1]
+                # Get charged/drained values directly from summary
                 data["body_battery_charged"] = bb_day.get("charged")
+                data["body_battery_drained"] = bb_day.get("drained")
 
         # Training readiness (may be a list)
         if training_readiness:
@@ -126,7 +129,7 @@ class GarminWellnessImporter:
 
         # Stress
         if stress:
-            data["avg_stress_level"] = stress.get("overallStressLevel")
+            data["avg_stress_level"] = stress.get("avgStressLevel") or stress.get("overallStressLevel")
             data["max_stress_level"] = stress.get("maxStressLevel")
             data["stress_duration_seconds"] = stress.get("highStressDuration")
             data["rest_duration_seconds"] = stress.get("restStressDuration")
