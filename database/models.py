@@ -263,6 +263,9 @@ class DailyReview(Base):
     approved_at = Column(DateTime)
     approval_notes = Column(Text)  # User's comments on approval/rejection
 
+    # User-provided context for AI evaluation
+    user_context = Column(Text)  # Notes provided by user when running evaluation
+
     # Export tracking
     adjustments_applied = Column(
         Boolean, default=False

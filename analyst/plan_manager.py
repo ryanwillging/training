@@ -301,8 +301,8 @@ class TrainingPlanManager:
             }
             results["modifications_proposed"] = len(evaluation.modifications)
 
-            # Store evaluation in daily review
-            self._store_daily_review(evaluation)
+            # Store evaluation in daily review (with user context if provided)
+            self._store_daily_review(evaluation, user_context=user_context)
 
             # If modifications are needed and confidence is high, apply them
             if evaluation.modifications and evaluation.confidence_score >= 0.7:
@@ -426,7 +426,7 @@ Test Weeks: 1, 12, 24
 Weekly Structure: Swim A (Mon), Lift A (Tue), VO2 (Wed), Swim B (Thu), Lift B (Fri)
 Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
 
-    def _store_daily_review(self, evaluation: PlanEvaluation) -> None:
+    def _store_daily_review(self, evaluation: PlanEvaluation, user_context: Optional[str] = None) -> None:
         """Store the evaluation in the daily_reviews table."""
         review = DailyReview(
             athlete_id=self.athlete_id,
@@ -447,7 +447,8 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                 }
                 for m in evaluation.modifications
             ]),
-            approval_status="pending" if evaluation.modifications else "no_changes_needed"
+            approval_status="pending" if evaluation.modifications else "no_changes_needed",
+            user_context=user_context  # Store user-provided notes
         )
 
         self.db.add(review)
