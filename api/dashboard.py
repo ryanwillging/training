@@ -113,7 +113,8 @@ def generate_dashboard_html(db):
     </div>
     '''
 
-    content = f'''
+    wellness_debug = f"<!-- wellness_html length: {len(wellness_html)} -->"
+    content = f'''{wellness_debug}
     <header class="mb-6">
         <h1 class="md-headline-large mb-2">Training Dashboard</h1>
         <p class="md-body-large text-secondary">{athlete_name} · Updated {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
