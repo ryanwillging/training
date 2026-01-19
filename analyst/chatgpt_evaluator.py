@@ -150,14 +150,26 @@ IMPORTANT GUIDELINES:
             return self._parse_evaluation_response(response_text)
 
         except Exception as e:
-            print(f"✗ Error calling OpenAI API: {e}")
+            error_type = type(e).__name__
+            error_detail = str(e)
+            # Provide more helpful error messages
+            if "Connection" in error_detail or "connection" in error_detail:
+                error_msg = f"Network error connecting to OpenAI: {error_detail}"
+            elif "authentication" in error_detail.lower() or "api_key" in error_detail.lower():
+                error_msg = f"API key error: {error_detail}"
+            elif "rate" in error_detail.lower():
+                error_msg = f"Rate limit error: {error_detail}"
+            else:
+                error_msg = f"{error_type}: {error_detail}"
+
+            print(f"✗ Error calling OpenAI API: {error_msg}")
             # Return a safe default evaluation
             return PlanEvaluation(
                 overall_assessment="error",
-                progress_summary=f"Error evaluating progress: {str(e)}",
+                progress_summary=f"Error evaluating progress: {error_msg}",
                 modifications=[],
                 next_week_focus="Continue as planned",
-                warnings=[f"AI evaluation failed: {str(e)}"],
+                warnings=[f"AI evaluation failed: {error_msg}"],
                 confidence_score=0.0
             )
 
