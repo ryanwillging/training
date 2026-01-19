@@ -65,6 +65,33 @@ training/
 - **Status**: Deployed and operational
 - **Cron**: Daily sync at 5:00 UTC (midnight EST)
 
+### Function Configuration
+AI evaluation requires longer timeout than Vercel's default (10s):
+```json
+// vercel.json
+{
+  "functions": {
+    "api/index.py": {
+      "maxDuration": 60
+    }
+  }
+}
+```
+
+### Python Dependencies (Vercel)
+Vercel uses `pyproject.toml` for Python dependencies (**NOT** requirements.txt):
+```toml
+[project]
+dependencies = [
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.0",
+    "python-dotenv>=1.0.0",
+    "openai>=1.0.0",
+    # Add new deps here, then redeploy
+]
+```
+Vercel auto-generates `uv.lock` during build. Use `requirements.txt` for local development only.
+
 ## API Endpoints
 
 ### Core
@@ -139,6 +166,12 @@ Key SQLAlchemy models in `database/models.py`:
   - `run_date`, `job_type`, `status` (success/partial/failed)
   - `garmin_activities_imported`, `garmin_wellness_imported`, `hevy_imported`
   - `errors_json`, `results_json`, `duration_seconds`
+- **DailyReview** - AI plan evaluations and review history
+  - `athlete_id`, `review_date` (unique constraint - one review per athlete per day)
+  - `overall_assessment`, `progress_summary`, `next_week_focus`
+  - `modifications_json`, `warnings_json`, `user_context`
+  - `status`: success, error, pending
+  - **Note**: Multiple evaluations on same day UPDATE existing record (don't insert)
 
 Data sources:
 - **Hevy**: Strength training workouts and exercises
@@ -384,12 +417,43 @@ All required variables are configured:
 - **Garmin auth fails**: Credentials may have expired or MFA triggered. Check `GARMIN_EMAIL`/`GARMIN_PASSWORD` in Vercel env vars
 - **Hevy sync empty**: Verify `HEVY_API_KEY` is valid. Test with: `curl -H "Authorization: Bearer $HEVY_API_KEY" https://api.hevyapp.com/v1/workouts`
 - **Database errors**: Locally uses SQLite (`training.db`). For Vercel, ensure `DATABASE_URL` points to PostgreSQL
-- **Env var whitespace errors**: Vercel env vars may contain hidden newline characters. If you see "contains leading or trailing whitespace" errors, re-enter the value in Vercel dashboard
+- **Env var whitespace errors**: Vercel env vars may contain hidden newline characters. If you see "contains leading or trailing whitespace" errors:
+  - **Vercel dashboard**: Re-enter the value manually (copy-paste may include newlines)
+  - **CLI**: Use `printf` instead of `echo` to avoid trailing newlines:
+    ```bash
+    # Wrong - echo adds newline
+    echo "my-api-key" | vercel env add MY_VAR production
+
+    # Correct - printf doesn't add newline
+    printf "my-api-key" | vercel env add MY_VAR production
+    ```
 
 ### Vercel Serverless Limitations
 - **Package imports fail**: `garminconnect` and `hevy-api-client` cannot import in Vercel's Python serverless runtime
 - **Workaround**: Run `python scripts/run_sync.py` locally to sync data to production database
 - **Dashboard sync button**: Will show import errors in production; use local sync instead for full functionality
+
+### Lazy Import Pattern for Serverless
+For packages that can't import in Vercel serverless, use conditional imports with availability flags:
+```python
+# At module level - attempt import, set flag
+GARMIN_AVAILABLE = False
+GarminWorkoutManager = None
+try:
+    from integrations.garmin.workout_manager import GarminWorkoutManager
+    GARMIN_AVAILABLE = True
+except ImportError:
+    pass
+
+# In functions - check flag before using
+def sync_to_garmin(self):
+    if not GARMIN_AVAILABLE:
+        return {"error": "Garmin integration not available in serverless"}
+
+    manager = GarminWorkoutManager()
+    # ... rest of implementation
+```
+This allows the module to load in Vercel while gracefully degrading functionality.
 
 ### Checking Logs
 ```bash
