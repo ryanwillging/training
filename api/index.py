@@ -6,7 +6,11 @@ import os
 from urllib.parse import urlparse, parse_qs
 from datetime import date, datetime, timedelta
 
-from api.design_system import wrap_page
+from api.design_system import (
+    wrap_page,
+    WORKOUT_STYLES, STATUS_COLORS, EVAL_TYPE_STYLES,
+    SEVERITY_STYLES, ASSESSMENT_COLORS, PRIORITY_COLORS,
+)
 from api.timezone import get_eastern_today
 
 # Database imports
@@ -1434,16 +1438,6 @@ class handler(BaseHTTPRequestHandler):
                 workouts_by_week[week_key] = []
             workouts_by_week[week_key].append(w)
 
-        # Workout type icons and colors
-        workout_styles = {
-            "swim_a": {"icon": "🏊", "label": "Swim A", "color": "#1976d2"},
-            "swim_b": {"icon": "🏊", "label": "Swim B", "color": "#1565c0"},
-            "swim_test": {"icon": "🏊‍♂️", "label": "400 TT Test", "color": "#0d47a1"},
-            "lift_a": {"icon": "🏋️", "label": "Lift A (Lower)", "color": "#388e3c"},
-            "lift_b": {"icon": "🏋️", "label": "Lift B (Upper)", "color": "#2e7d32"},
-            "vo2": {"icon": "🫀", "label": "VO2 Session", "color": "#d32f2f"},
-        }
-
         if not workouts_by_week:
             content = '''
             <header class="mb-6">
@@ -1480,7 +1474,7 @@ class handler(BaseHTTPRequestHandler):
             # Build workout items with inline expandable details
             items_html = ""
             for w in sorted(week_workouts, key=lambda x: x.scheduled_date):
-                style = workout_styles.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
+                style = WORKOUT_STYLES.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
 
                 status_badge = ""
                 if w.status == "completed":
@@ -1910,42 +1904,6 @@ class handler(BaseHTTPRequestHandler):
             days_elapsed = (today - start_date).days
             current_week = min(max(1, (days_elapsed // 7) + 1), 24)
 
-        # Status badge colors
-        status_colors = {
-            "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending Review"},
-            "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
-            "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"},
-            "no_changes_needed": {"bg": "#e3f2fd", "text": "#1565c0", "label": "No Changes Needed"},
-            "error": {"bg": "#fce4ec", "text": "#c62828", "label": "Evaluation Failed"},
-        }
-
-        # Evaluation type styles
-        eval_type_styles = {
-            "nightly": {"bg": "#e8eaf6", "text": "#3949ab", "icon": "🌙", "label": "Nightly"},
-            "on_demand": {"bg": "#e0f2f1", "text": "#00796b", "icon": "👆", "label": "On-Demand"},
-        }
-
-        # Severity styles for lifestyle insights
-        severity_styles = {
-            "info": {"bg": "#e3f2fd", "text": "#1565c0", "icon": "ℹ️"},
-            "warning": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠️"},
-            "alert": {"bg": "#ffebee", "text": "#c62828", "icon": "🚨"},
-        }
-
-        assessment_colors = {
-            "on_track": {"bg": "#e8f5e9", "text": "#2e7d32", "icon": "✓"},
-            "needs_adjustment": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠"},
-            "significant_changes_needed": {"bg": "#ffebee", "text": "#c62828", "icon": "!"},
-            "error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
-            "parse_error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
-        }
-
-        priority_colors = {
-            "high": {"bg": "#ffebee", "text": "#c62828"},
-            "medium": {"bg": "#fff3e0", "text": "#e65100"},
-            "low": {"bg": "#e3f2fd", "text": "#1565c0"},
-        }
-
         if not is_initialized:
             content = '''
             <header class="mb-6">
@@ -1974,14 +1932,14 @@ class handler(BaseHTTPRequestHandler):
             lifestyle_insights = json.loads(review.lifestyle_insights_json) if review.lifestyle_insights_json else {}
 
             status = review.approval_status or "pending"
-            status_style = status_colors.get(status, status_colors["pending"])
+            status_style = STATUS_COLORS.get(status, STATUS_COLORS["pending"])
 
             # Evaluation type (nightly vs on_demand)
             eval_type = getattr(review, 'evaluation_type', None) or "nightly"
-            eval_style = eval_type_styles.get(eval_type, eval_type_styles["nightly"])
+            eval_style = EVAL_TYPE_STYLES.get(eval_type, EVAL_TYPE_STYLES["nightly"])
 
             assessment = progress_data.get("overall_assessment", "unknown")
-            assessment_style = assessment_colors.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
+            assessment_style = ASSESSMENT_COLORS.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
             confidence = progress_data.get("confidence_score", 0)
 
             review_date = review.review_date
@@ -2002,7 +1960,7 @@ class handler(BaseHTTPRequestHandler):
                     adj_priority = adj.get("priority", "medium")
                     adj_week = adj.get("week", "?")
 
-                    p_style = priority_colors.get(adj_priority, priority_colors["medium"])
+                    p_style = PRIORITY_COLORS.get(adj_priority, PRIORITY_COLORS["medium"])
 
                     mods_html += f'''
                     <div class="modification-item">
@@ -2057,7 +2015,7 @@ class handler(BaseHTTPRequestHandler):
                     if category in lifestyle_insights:
                         insight = lifestyle_insights[category]
                         sev = insight.get("severity", "info")
-                        sev_style = severity_styles.get(sev, severity_styles["info"])
+                        sev_style = SEVERITY_STYLES.get(sev, SEVERITY_STYLES["info"])
                         observation = insight.get("observation", "")
                         actions = insight.get("actions", [])
 

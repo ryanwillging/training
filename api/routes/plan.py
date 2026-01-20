@@ -13,7 +13,10 @@ from api.timezone import get_eastern_today
 from database.base import SessionLocal
 from database.models import ScheduledWorkout, DailyReview, PlanAdjustment
 from analyst.plan_manager import TrainingPlanManager
-from api.design_system import wrap_page
+from api.design_system import (
+    wrap_page,
+    WORKOUT_STYLES, STATUS_COLORS, ASSESSMENT_COLORS, PRIORITY_COLORS,
+)
 import json
 
 
@@ -269,16 +272,6 @@ async def get_upcoming_workouts_page(days: int = Query(default=14, ge=1, le=30))
 def _generate_upcoming_html(workouts_by_date: dict, today: date, days: int) -> str:
     """Generate HTML content for upcoming workouts page."""
 
-    # Workout type icons and colors
-    workout_styles = {
-        "swim_a": {"icon": "🏊", "label": "Swim A", "color": "#1976d2"},
-        "swim_b": {"icon": "🏊", "label": "Swim B", "color": "#1565c0"},
-        "swim_test": {"icon": "🏊‍♂️", "label": "Swim Test", "color": "#0d47a1"},
-        "lift_a": {"icon": "🏋️", "label": "Lift A (Lower)", "color": "#388e3c"},
-        "lift_b": {"icon": "🏋️", "label": "Lift B (Upper)", "color": "#2e7d32"},
-        "vo2": {"icon": "🫀", "label": "VO2 Session", "color": "#d32f2f"},
-    }
-
     if not workouts_by_date:
         return '''
         <header class="mb-6">
@@ -317,7 +310,7 @@ def _generate_upcoming_html(workouts_by_date: dict, today: date, days: int) -> s
         # Build workout items for this day
         items_html = ""
         for w in workouts:
-            style = workout_styles.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
+            style = WORKOUT_STYLES.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
 
             status_badge = ""
             if w.status == "completed":
@@ -793,31 +786,6 @@ async def get_evaluation_context():
 def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str:
     """Generate HTML content for the reviews page."""
 
-    # Status badge colors
-    status_colors = {
-        "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending Review"},
-        "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
-        "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"},
-        "no_changes_needed": {"bg": "#e3f2fd", "text": "#1565c0", "label": "No Changes Needed"},
-        "error": {"bg": "#fce4ec", "text": "#c62828", "label": "Evaluation Failed"},
-    }
-
-    # Assessment badge colors
-    assessment_colors = {
-        "on_track": {"bg": "#e8f5e9", "text": "#2e7d32", "icon": "✓"},
-        "needs_adjustment": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠"},
-        "significant_changes_needed": {"bg": "#ffebee", "text": "#c62828", "icon": "!"},
-        "error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
-        "parse_error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
-    }
-
-    # Priority colors
-    priority_colors = {
-        "high": {"bg": "#ffebee", "text": "#c62828"},
-        "medium": {"bg": "#fff3e0", "text": "#e65100"},
-        "low": {"bg": "#e3f2fd", "text": "#1565c0"},
-    }
-
     # Check for pending reviews
     pending_reviews = [r for r in reviews if r.approval_status == "pending"]
     pending_count = len(pending_reviews)
@@ -868,11 +836,11 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
 
         # Status
         status = review.approval_status or "pending"
-        status_style = status_colors.get(status, status_colors["pending"])
+        status_style = STATUS_COLORS.get(status, STATUS_COLORS["pending"])
 
         # Assessment
         assessment = progress_data.get("overall_assessment", "unknown")
-        assessment_style = assessment_colors.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
+        assessment_style = ASSESSMENT_COLORS.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
         confidence = progress_data.get("confidence_score", 0)
 
         # Date formatting
@@ -894,7 +862,7 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
                 adj_priority = adj.get("priority", "medium")
                 adj_week = adj.get("week", "?")
 
-                p_style = priority_colors.get(adj_priority, priority_colors["medium"])
+                p_style = PRIORITY_COLORS.get(adj_priority, PRIORITY_COLORS["medium"])
 
                 mods_html += f'''
                 <div class="modification-item">

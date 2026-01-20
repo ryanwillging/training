@@ -43,6 +43,68 @@ COLORS = {
     "info-light": "#03a9f4",
 }
 
+# Workout Type Styling (icons, labels, colors)
+WORKOUT_STYLES = {
+    "swim_a": {"icon": "🏊", "label": "Swim A", "color": "#1976d2"},
+    "swim_b": {"icon": "🏊", "label": "Swim B", "color": "#1565c0"},
+    "swim_test": {"icon": "🏊‍♂️", "label": "400 TT Test", "color": "#0d47a1"},
+    "lift_a": {"icon": "🏋️", "label": "Lift A (Lower)", "color": "#388e3c"},
+    "lift_b": {"icon": "🏋️", "label": "Lift B (Upper)", "color": "#2e7d32"},
+    "vo2": {"icon": "🫀", "label": "VO2 Session", "color": "#d32f2f"},
+}
+
+# Review Status Styling
+STATUS_COLORS = {
+    "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending Review"},
+    "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
+    "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"},
+    "no_changes_needed": {"bg": "#e3f2fd", "text": "#1565c0", "label": "No Changes Needed"},
+    "error": {"bg": "#fce4ec", "text": "#c62828", "label": "Evaluation Failed"},
+}
+
+EVAL_TYPE_STYLES = {
+    "nightly": {"bg": "#e8eaf6", "text": "#3949ab", "icon": "🌙", "label": "Nightly"},
+    "on_demand": {"bg": "#e0f2f1", "text": "#00796b", "icon": "👆", "label": "On-Demand"},
+}
+
+SEVERITY_STYLES = {
+    "info": {"bg": "#e3f2fd", "text": "#1565c0", "icon": "ℹ️"},
+    "warning": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠️"},
+    "alert": {"bg": "#ffebee", "text": "#c62828", "icon": "🚨"},
+}
+
+ASSESSMENT_COLORS = {
+    "on_track": {"bg": "#e8f5e9", "text": "#2e7d32", "icon": "✓"},
+    "needs_adjustment": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠"},
+    "significant_changes_needed": {"bg": "#ffebee", "text": "#c62828", "icon": "!"},
+    "error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
+    "parse_error": {"bg": "#fce4ec", "text": "#c62828", "icon": "✗"},
+}
+
+PRIORITY_COLORS = {
+    "high": {"bg": "#ffebee", "text": "#c62828"},
+    "medium": {"bg": "#fff3e0", "text": "#e65100"},
+    "low": {"bg": "#e3f2fd", "text": "#1565c0"},
+}
+
+
+def get_workout_status_css() -> str:
+    """Generate CSS for workout status badges."""
+    return """
+    .workout-status.completed {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+    .workout-status.skipped {
+        background: #fff3e0;
+        color: #e65100;
+    }
+    .workout-status.synced {
+        background: #e3f2fd;
+        color: #1565c0;
+    }
+    """
+
 
 def get_base_css() -> str:
     """
