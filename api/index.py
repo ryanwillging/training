@@ -6,7 +6,7 @@ import os
 from urllib.parse import urlparse, parse_qs
 from datetime import date, datetime, timedelta
 
-from api.design_system import wrap_page, get_base_css, get_nav_css
+from api.design_system import wrap_page
 from api.timezone import get_eastern_today
 
 # Database imports

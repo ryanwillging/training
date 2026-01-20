@@ -1,0 +1,141 @@
+{
+  "captured_at": "2026-01-20T09:48:48.692386",
+  "base_url": "https://training.ryanwillging.com",
+  "endpoints": {
+    "/health": {
+      "status_code": 200,
+      "content_type": "application/json",
+      "type": "json",
+      "key_fields": {
+        "status": "healthy",
+        "database": "connected"
+      },
+      "full_response_keys": [
+        "status",
+        "database",
+        "activities"
+      ]
+    },
+    "/api/cron/sync/status": {
+      "status_code": 200,
+      "content_type": "application/json",
+      "type": "json",
+      "key_fields": {
+        "status": "configured",
+        "endpoint": "/api/cron/sync"
+      },
+      "full_response_keys": [
+        "endpoint",
+        "schedule",
+        "status",
+        "last_run"
+      ]
+    },
+    "/api/plan/status": {
+      "status_code": 200,
+      "content_type": "application/json",
+      "type": "json",
+      "key_fields": {
+        "is_initialized": null,
+        "plan_name": null
+      },
+      "full_response_keys": [
+        "initialized",
+        "start_date",
+        "current_week",
+        "is_test_week",
+        "progress"
+      ]
+    },
+    "/api/plan/evaluation-context": {
+      "status_code": 200,
+      "content_type": "application/json",
+      "type": "json",
+      "key_fields": {
+        "current_week": 1,
+        "ai_instructions": "The AI is instructed to be conservative with modifications - only suggesting changes when clearly warranted. It minimizes the number of workouts affected and always explains its reasoning."
+      },
+      "full_response_keys": [
+        "current_week",
+        "wellness_data",
+        "recent_workouts",
+        "goal_progress",
+        "upcoming_workouts",
+        "ai_instructions"
+      ]
+    },
+    "/api/reports/list": {
+      "status_code": 200,
+      "content_type": "application/json",
+      "type": "json",
+      "key_fields": {
+        "count": 30
+      },
+      "full_response_keys": [
+        "reports",
+        "count",
+        "weekly_url"
+      ]
+    },
+    "/dashboard": {
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "type": "html",
+      "html_length": 123080,
+      "html_structure_hash": "3f6a35496089b8be",
+      "has_nav": true,
+      "has_style": true,
+      "has_errors": false
+    },
+    "/upcoming": {
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "type": "html",
+      "html_length": 500321,
+      "html_structure_hash": "4e38f32c9a23728e",
+      "has_nav": true,
+      "has_style": true,
+      "has_errors": false
+    },
+    "/reviews": {
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "type": "html",
+      "html_length": 64791,
+      "html_structure_hash": "bfc52dd9d98a083a",
+      "has_nav": true,
+      "has_style": true,
+      "has_errors": false
+    },
+    "/metrics": {
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "type": "html",
+      "html_length": 26251,
+      "html_structure_hash": "dba0144907100dd0",
+      "has_nav": true,
+      "has_style": true,
+      "has_errors": false
+    },
+    "/api/reports/daily": {
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "type": "html",
+      "html_length": 21810,
+      "html_structure_hash": "dfa1ddd41717686f",
+      "has_nav": true,
+      "has_style": true,
+      "has_errors": false
+    },
+    "/api/reports/weekly": {
+      "status_code": 200,
+      "content_type": "text/html; charset=utf-8",
+      "type": "html",
+      "html_length": 22694,
+      "html_structure_hash": "479b1c909a2d6c9a",
+      "has_nav": true,
+      "has_style": true,
+      "has_errors": false
+    }
+  }
+}

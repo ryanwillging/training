@@ -51,12 +51,19 @@ training/
 │   └── base_training_plan.md # 24-week training plan
 ├── scripts/              # Utility scripts
 │   ├── setup_db.py       # Database initialization
-│   └── run_sync.py       # Local sync against production DB
-└── tests/                # Test suite
-    └── e2e/              # End-to-end tests (Playwright)
-        ├── conftest.py   # Pytest fixtures
-        ├── test_production.py # Production smoke tests
-        └── test_design_system.py # Design consistency tests
+│   ├── run_sync.py       # Local sync against production DB
+│   ├── capture_snapshots.py # API snapshot testing for refactoring
+│   └── migrations/       # One-time database migrations (archived)
+├── tests/                # Test suite
+│   ├── e2e/              # End-to-end tests (Playwright)
+│   │   ├── conftest.py   # Pytest fixtures
+│   │   ├── test_production.py # Production smoke tests
+│   │   └── test_design_system.py # Design consistency tests
+│   └── snapshots/        # API response snapshots for verification
+└── docs/                 # Documentation
+    ├── ARCHITECTURE.md   # System architecture reference
+    ├── TECHNICAL_SPEC.md # Original technical specification
+    └── archive/          # Historical planning documents
 ```
 
 ## Vercel Deployment
@@ -220,10 +227,8 @@ Data sources:
 - Strength Training: sportTypeId 5
 - Running: sportTypeId 1
 
-## Goal Analysis (`analyst/`)
-- **GoalAnalyzer**: Rule-based goal progress tracking (trends, percentages)
-- **WorkoutRecommendationEngine**: Rule-based workout suggestions
-- **Note**: These provide fallback/local analysis. The AI evaluation pipeline is the primary system for recommendations.
+## Goal Analysis
+The AI evaluation pipeline (`chatgpt_evaluator.py`) is the primary system for goal analysis and recommendations. Rule-based analysis modules were consolidated into the unified AI evaluation.
 
 ## Training Plan System (`analyst/` + `plans/`)
 The 24-week training plan system provides automated workout scheduling, Garmin integration, and AI-powered plan evaluation.
