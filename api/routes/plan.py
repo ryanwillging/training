@@ -195,7 +195,7 @@ async def run_evaluation():
                 detail="Plan not initialized. Call /plan/initialize first."
             )
 
-        results = manager.run_nightly_evaluation()
+        results = manager.run_nightly_evaluation(evaluation_type="on_demand")
         return results
 
     finally:
@@ -739,8 +739,11 @@ async def run_evaluation_with_context(request: EvaluationRequest):
                 detail="Plan not initialized. Call /plan/initialize first."
             )
 
-        # Run evaluation with user context
-        results = manager.run_nightly_evaluation(user_context=request.user_context)
+        # Run evaluation with user context (on-demand via UI)
+        results = manager.run_nightly_evaluation(
+            user_context=request.user_context,
+            evaluation_type="on_demand"
+        )
         return results
 
     finally:

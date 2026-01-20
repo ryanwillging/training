@@ -19,7 +19,6 @@ from database.base import SessionLocal
 from integrations.garmin.activity_importer import GarminActivityImporter
 from integrations.garmin.wellness_importer import GarminWellnessImporter
 from integrations.hevy.activity_importer import HevyActivityImporter
-from analyst.goal_analyzer import GoalAnalyzer, WorkoutRecommendationEngine
 from analyst.plan_manager import TrainingPlanManager
 
 router = APIRouter(prefix="/cron", tags=["cron"])
@@ -79,7 +78,6 @@ async def cron_sync(
         "garmin_activities": None,
         "garmin_wellness": None,
         "hevy": None,
-        "goal_analysis": None,
         "errors": []
     }
 
@@ -130,29 +128,18 @@ async def cron_sync(
             results["hevy"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
             results["errors"].append(f"Hevy sync failed: {str(e)}")
 
-        # Run goal analysis and generate recommendations
-        try:
-            analyzer = WorkoutRecommendationEngine(db, athlete_id)
-            recommendations = analyzer.generate_weekly_recommendations()
-            results["goal_analysis"] = {
-                "goals_analyzed": len(recommendations.get("goal_progress", [])),
-                "priority_focus": recommendations.get("priority_focus"),
-                "recommendations_count": len(recommendations.get("recommendations", []))
-            }
-        except Exception as e:
-            results["goal_analysis"] = {"error": str(e)}
-            results["errors"].append(f"Goal analysis failed: {str(e)}")
-
-        # Run AI-powered plan evaluation (ChatGPT thinking mode)
+        # Run AI-powered plan evaluation (unified evaluation pipeline)
         try:
             plan_manager = TrainingPlanManager(db, athlete_id)
             if plan_manager.get_plan_start_date():  # Only run if plan is initialized
-                evaluation_results = plan_manager.run_nightly_evaluation()
+                evaluation_results = plan_manager.run_nightly_evaluation(evaluation_type="nightly")
+                evaluation_data = evaluation_results.get("evaluation", {})
                 results["plan_evaluation"] = {
                     "current_week": evaluation_results.get("current_week"),
-                    "assessment": evaluation_results.get("evaluation", {}).get("overall_assessment"),
+                    "assessment": evaluation_data.get("overall_assessment"),
                     "modifications_proposed": evaluation_results.get("modifications_proposed", 0),
-                    "confidence": evaluation_results.get("evaluation", {}).get("confidence_score")
+                    "confidence": evaluation_data.get("confidence_score"),
+                    "has_lifestyle_insights": bool(evaluation_data.get("lifestyle_insights"))
                 }
                 if evaluation_results.get("errors"):
                     results["errors"].extend([f"Plan evaluation: {e}" for e in evaluation_results["errors"]])

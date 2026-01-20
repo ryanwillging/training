@@ -170,7 +170,9 @@ Key SQLAlchemy models in `database/models.py`:
   - `athlete_id`, `review_date` (unique constraint - one review per athlete per day)
   - `overall_assessment`, `progress_summary`, `next_week_focus`
   - `modifications_json`, `warnings_json`, `user_context`
-  - `status`: success, error, pending
+  - `evaluation_type`: "nightly" or "on_demand"
+  - `lifestyle_insights_json`: Structured insights (health/recovery/nutrition/sleep)
+  - `approval_status`: pending, approved, rejected, no_changes_needed, error
   - **Note**: Multiple evaluations on same day UPDATE existing record (don't insert)
 
 Data sources:
@@ -219,9 +221,9 @@ Data sources:
 - Running: sportTypeId 1
 
 ## Goal Analysis (`analyst/`)
-- **GoalAnalyzer**: Assesses progress toward goals, calculates trends
-- **WorkoutRecommendationEngine**: Generates weekly workout suggestions
-- Runs automatically via daily cron sync
+- **GoalAnalyzer**: Rule-based goal progress tracking (trends, percentages)
+- **WorkoutRecommendationEngine**: Rule-based workout suggestions
+- **Note**: These provide fallback/local analysis. The AI evaluation pipeline is the primary system for recommendations.
 
 ## Training Plan System (`analyst/` + `plans/`)
 The 24-week training plan system provides automated workout scheduling, Garmin integration, and AI-powered plan evaluation.
@@ -229,8 +231,12 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
 ### Components
 - **plan_parser.py**: Parses `plans/base_training_plan.md` into structured workout data
 - **workout_scheduler.py**: Assigns dates to workouts, manages plan state
-- **chatgpt_evaluator.py**: AI evaluation using OpenAI o1 (reasoning mode)
-- **plan_manager.py**: Orchestrates all plan components
+- **chatgpt_evaluator.py**: AI evaluation with lifestyle insights
+  - Uses OpenAI models (gpt-4o, gpt-5.2, etc.)
+  - Analyzes wellness, workouts, goals
+  - Generates lifestyle insights (health/recovery/nutrition/sleep)
+  - Returns `PlanEvaluation` with `LifestyleInsight` objects
+- **plan_manager.py**: Orchestrates all plan components, stores evaluations
 
 ### Garmin Workout Integration
 - **workout_manager.py**: Creates workouts in Garmin Connect format
@@ -240,12 +246,12 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
 ### Nightly Cron Flow
 1. Sync Garmin activities and wellness data
 2. Sync Hevy workouts
-3. Run goal analysis
-4. **Run AI plan evaluation** (ChatGPT o1 reasoning mode)
+3. **Run unified AI evaluation pipeline**
    - Analyzes wellness, workouts, goal progress
-   - Proposes modifications if needed (conservative approach - minimal changes)
+   - Generates lifestyle insights (health, recovery, nutrition, sleep)
+   - Proposes modifications for next 7 days only (conservative approach)
    - Modifications stored as pending for user review at `/reviews`
-   - User context can be provided via `/api/plan/evaluate-with-context`
+   - Evaluation type marked as "nightly"
 
 ### Cron Logging & Monitoring
 Each cron run is logged to the `CronLog` table with:
@@ -265,6 +271,7 @@ python scripts/run_sync.py
 
 ### Training Plan Structure
 - **24 weeks**, 3 phases + taper
+- **Plan Start Date**: January 20, 2025 (fixed anchor)
 - **Test weeks**: 2, 12, 24 (400 TT)
 - **Weekly cadence**:
   - Mon: Swim A (Threshold/CSS)
@@ -274,6 +281,39 @@ python scripts/run_sync.py
   - Fri: VO2 Session (Run/Row/Bike)
   - Sat: Lift B (Upper body)
   - Sun: REST
+
+### Plan Anchoring
+- The plan is **anchored to January 20, 2025** - week numbers are fixed
+- Never recreate the 24-week plan; only adjust near-term workouts
+- AI modifications are limited to the **next 7 days only**
+- Future workouts remain unchanged until their evaluation window
+
+### Unified Evaluation Pipeline
+A single evaluation process is used for both nightly (cron) and on-demand (manual) evaluations:
+
+| Trigger | Evaluation Type | Source |
+|---------|-----------------|--------|
+| Nightly cron | `nightly` | Automated after data sync |
+| Manual via /reviews | `on_demand` | User-initiated with optional notes |
+
+Both use `TrainingPlanManager.run_nightly_evaluation()` and store results in `DailyReview`.
+
+### Lifestyle Insights
+The AI provides detailed, actionable insights in four categories:
+
+| Category | Description |
+|----------|-------------|
+| **Health** | Overall health observations from wellness metrics |
+| **Recovery** | Training readiness, HRV trends, recovery status |
+| **Nutrition** | Diet considerations based on goals and training load |
+| **Sleep** | Sleep quality analysis and optimization tips |
+
+Each insight includes:
+- **Observation**: What the AI sees in the data
+- **Severity**: `info`, `warning`, or `alert`
+- **Actions**: 2-4 specific, actionable steps (e.g., "Set 10pm bedtime alarm")
+
+Actions are designed to be specific enough for potential automation (calendar reminders, app notifications).
 
 ### Plan Review & Approval Workflow
 The Reviews page (`/reviews`) displays AI-suggested modifications from nightly evaluations:
@@ -409,7 +449,7 @@ All required variables are configured:
 - `HEVY_API_KEY` - Hevy API key
 - `CRON_SECRET` - Secret for cron authorization
 - `OPENAI_API_KEY` - OpenAI API key (for ChatGPT plan evaluation)
-- `OPENAI_MODEL` - Model to use (default: o1-preview)
+- `OPENAI_MODEL` - Model to use (e.g., gpt-4o, gpt-5.2-2025-12-11)
 
 ## Troubleshooting
 

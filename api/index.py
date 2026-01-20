@@ -1919,6 +1919,19 @@ class handler(BaseHTTPRequestHandler):
             "error": {"bg": "#fce4ec", "text": "#c62828", "label": "Evaluation Failed"},
         }
 
+        # Evaluation type styles
+        eval_type_styles = {
+            "nightly": {"bg": "#e8eaf6", "text": "#3949ab", "icon": "🌙", "label": "Nightly"},
+            "on_demand": {"bg": "#e0f2f1", "text": "#00796b", "icon": "👆", "label": "On-Demand"},
+        }
+
+        # Severity styles for lifestyle insights
+        severity_styles = {
+            "info": {"bg": "#e3f2fd", "text": "#1565c0", "icon": "ℹ️"},
+            "warning": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠️"},
+            "alert": {"bg": "#ffebee", "text": "#c62828", "icon": "🚨"},
+        }
+
         assessment_colors = {
             "on_track": {"bg": "#e8f5e9", "text": "#2e7d32", "icon": "✓"},
             "needs_adjustment": {"bg": "#fff3e0", "text": "#e65100", "icon": "⚠"},
@@ -1958,9 +1971,14 @@ class handler(BaseHTTPRequestHandler):
         for review in reviews:
             progress_data = json.loads(review.progress_summary) if review.progress_summary else {}
             adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
+            lifestyle_insights = json.loads(review.lifestyle_insights_json) if review.lifestyle_insights_json else {}
 
             status = review.approval_status or "pending"
             status_style = status_colors.get(status, status_colors["pending"])
+
+            # Evaluation type (nightly vs on_demand)
+            eval_type = getattr(review, 'evaluation_type', None) or "nightly"
+            eval_style = eval_type_styles.get(eval_type, eval_type_styles["nightly"])
 
             assessment = progress_data.get("overall_assessment", "unknown")
             assessment_style = assessment_colors.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
@@ -2031,14 +2049,56 @@ class handler(BaseHTTPRequestHandler):
                 </div>
                 '''
 
+            # Build lifestyle insights HTML
+            lifestyle_html = ""
+            if lifestyle_insights:
+                insights_cards = ""
+                for category in ["health", "recovery", "nutrition", "sleep"]:
+                    if category in lifestyle_insights:
+                        insight = lifestyle_insights[category]
+                        sev = insight.get("severity", "info")
+                        sev_style = severity_styles.get(sev, severity_styles["info"])
+                        observation = insight.get("observation", "")
+                        actions = insight.get("actions", [])
+
+                        actions_html_list = "".join([f'<li>{action}</li>' for action in actions])
+
+                        insights_cards += f'''
+                        <div class="lifestyle-insight-card" style="border-left: 3px solid {sev_style["text"]};">
+                            <div class="insight-header">
+                                <span class="insight-category">{sev_style["icon"]} {category.title()}</span>
+                                <span class="insight-severity" style="background: {sev_style["bg"]}; color: {sev_style["text"]};">{sev.upper()}</span>
+                            </div>
+                            <p class="insight-observation">{observation}</p>
+                            {"<div class='insight-actions'><strong>Actions:</strong><ul>" + actions_html_list + "</ul></div>" if actions else ""}
+                        </div>
+                        '''
+
+                if insights_cards:
+                    lifestyle_html = f'''
+                    <div class="lifestyle-insights-section">
+                        <h4 class="section-toggle" onclick="toggleSection(this)">
+                            <span class="toggle-icon">▶</span> Lifestyle Insights
+                        </h4>
+                        <div class="section-content collapsed">
+                            <div class="lifestyle-insights-grid">
+                                {insights_cards}
+                            </div>
+                        </div>
+                    </div>
+                    '''
+
             cards_html += f'''
-            <div class="review-card {'pending' if status == 'pending' else ''}">
-                <div class="review-header">
+            <div class="review-card {'pending' if status == 'pending' else ''}" data-review-id="{review.id}">
+                <div class="review-header" onclick="toggleReviewDetails(this)">
                     <div class="review-date">
                         <span class="date-label">{date_label}</span>
                         <span class="date-full">{review_date.strftime("%A")}</span>
                     </div>
                     <div class="review-badges">
+                        <span class="eval-type-badge" style="background: {eval_style["bg"]}; color: {eval_style["text"]};">
+                            {eval_style["icon"]} {eval_style["label"]}
+                        </span>
                         <span class="status-badge" style="background: {status_style["bg"]}; color: {status_style["text"]};">
                             {status_style["label"]}
                         </span>
@@ -2047,11 +2107,13 @@ class handler(BaseHTTPRequestHandler):
                         </span>
                         {f'<span class="confidence-badge">{int(confidence * 100)}% confidence</span>' if confidence else ''}
                     </div>
+                    <span class="expand-icon">▼</span>
                 </div>
                 {user_context_html}
-                <div class="review-body">
-                    {f'<div class="review-insights"><h4>Insights</h4><p>{review.insights}</p></div>' if review.insights else ''}
-                    {f'<div class="review-recommendations"><h4>Recommendations</h4><p>{review.recommendations}</p></div>' if review.recommendations else ''}
+                <div class="review-body collapsed">
+                    {f'<div class="review-insights"><h4>Progress Summary</h4><p>{review.insights}</p></div>' if review.insights else ''}
+                    {f'<div class="review-recommendations"><h4>Next Week Focus</h4><p>{review.recommendations}</p></div>' if review.recommendations else ''}
+                    {lifestyle_html}
                     <div class="review-modifications">
                         <h4>Proposed Modifications ({len(adjustments)})</h4>
                         <div class="modifications-list">
@@ -2239,6 +2301,28 @@ class handler(BaseHTTPRequestHandler):
         document.addEventListener('keydown', (e) => {{
             if (e.key === 'Escape') closeModal();
         }});
+
+        function toggleReviewDetails(header) {{
+            const card = header.closest('.review-card');
+            const body = card.querySelector('.review-body');
+            const icon = card.querySelector('.expand-icon');
+            body.classList.toggle('collapsed');
+            icon.textContent = body.classList.contains('collapsed') ? '▼' : '▲';
+        }}
+
+        function toggleSection(header) {{
+            const content = header.nextElementSibling;
+            const icon = header.querySelector('.toggle-icon');
+            content.classList.toggle('collapsed');
+            icon.textContent = content.classList.contains('collapsed') ? '▶' : '▼';
+        }}
+
+        // Auto-expand pending reviews
+        document.querySelectorAll('.review-card.pending .review-body').forEach(body => {{
+            body.classList.remove('collapsed');
+            const card = body.closest('.review-card');
+            card.querySelector('.expand-icon').textContent = '▲';
+        }});
         </script>
 
         <style>
@@ -2417,6 +2501,110 @@ class handler(BaseHTTPRequestHandler):
                 background: #ffebee;
                 color: #c62828;
                 border-radius: var(--radius-md);
+            }}
+
+            /* Evaluation type badge */
+            .eval-type-badge {{
+                font-size: 11px;
+                padding: 4px 10px;
+                border-radius: var(--radius-full);
+                font-weight: 500;
+            }}
+
+            /* Collapsible sections */
+            .review-header {{
+                cursor: pointer;
+                transition: background 0.2s;
+            }}
+            .review-header:hover {{
+                background: var(--md-surface);
+            }}
+            .expand-icon {{
+                font-size: 12px;
+                color: var(--md-on-surface-variant);
+                transition: transform 0.2s;
+            }}
+            .collapsed {{
+                display: none !important;
+            }}
+            .section-toggle {{
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 0;
+                user-select: none;
+            }}
+            .section-toggle:hover {{
+                color: var(--md-primary);
+            }}
+            .toggle-icon {{
+                font-size: 12px;
+                transition: transform 0.2s;
+            }}
+
+            /* Lifestyle insights */
+            .lifestyle-insights-section {{
+                margin-top: 20px;
+                padding-top: 20px;
+                border-top: 1px solid var(--md-outline-variant);
+            }}
+            .lifestyle-insights-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+                gap: 16px;
+                margin-top: 12px;
+            }}
+            .lifestyle-insight-card {{
+                background: var(--md-surface-variant);
+                border-radius: var(--radius-md);
+                padding: 16px;
+            }}
+            .insight-header {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 12px;
+            }}
+            .insight-category {{
+                font-weight: 600;
+                font-size: 14px;
+                color: var(--md-on-surface);
+            }}
+            .insight-severity {{
+                font-size: 10px;
+                padding: 2px 8px;
+                border-radius: var(--radius-full);
+                font-weight: 600;
+            }}
+            .insight-observation {{
+                color: var(--md-on-surface-variant);
+                line-height: 1.5;
+                margin-bottom: 12px;
+            }}
+            .insight-actions {{
+                background: var(--md-surface);
+                border-radius: var(--radius-sm);
+                padding: 12px;
+            }}
+            .insight-actions strong {{
+                display: block;
+                margin-bottom: 8px;
+                color: var(--md-on-surface);
+                font-size: 13px;
+            }}
+            .insight-actions ul {{
+                margin: 0;
+                padding-left: 20px;
+            }}
+            .insight-actions li {{
+                color: var(--md-on-surface-variant);
+                font-size: 13px;
+                line-height: 1.6;
+                margin-bottom: 4px;
+            }}
+            .insight-actions li:last-child {{
+                margin-bottom: 0;
             }}
 
             /* Modal styles */

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from analyst.plan_parser import PlanParser, Workout, WorkoutType, TrainingPlan
 from analyst.workout_scheduler import WorkoutScheduler, PlanAdjuster
-from analyst.chatgpt_evaluator import ChatGPTEvaluator, PlanEvaluation, PlanModification
+from analyst.chatgpt_evaluator import ChatGPTEvaluator, PlanEvaluation, PlanModification, LifestyleInsight
 from database.models import (
     Athlete, DailyWellness, ScheduledWorkout, DailyReview, Goal, GoalProgress,
     CompletedActivity, WorkoutAnalysis
@@ -274,14 +274,19 @@ class TrainingPlanManager:
 
         return None
 
-    def run_nightly_evaluation(self, user_context: Optional[str] = None) -> Dict[str, Any]:
+    def run_nightly_evaluation(
+        self,
+        user_context: Optional[str] = None,
+        evaluation_type: str = "nightly"
+    ) -> Dict[str, Any]:
         """
-        Run the nightly AI evaluation of training progress.
+        Run the AI evaluation of training progress.
 
-        This is called by the cron job after data sync.
+        This is called by the cron job (nightly) or manually via /reviews page (on_demand).
 
         Args:
             user_context: Optional user-provided context or notes for the AI to consider
+            evaluation_type: "nightly" for cron jobs, "on_demand" for manual evaluations
 
         Returns:
             Evaluation results and any proposed modifications
@@ -292,6 +297,7 @@ class TrainingPlanManager:
             "evaluation": None,
             "modifications_proposed": 0,
             "user_context_provided": bool(user_context),
+            "evaluation_type": evaluation_type,
             "errors": []
         }
 
@@ -314,17 +320,31 @@ class TrainingPlanManager:
                 user_context=user_context
             )
 
+            # Convert lifestyle insights to dict format
+            lifestyle_insights_dict = {}
+            for insight in evaluation.lifestyle_insights:
+                lifestyle_insights_dict[insight.category] = {
+                    "observation": insight.observation,
+                    "severity": insight.severity,
+                    "actions": insight.actions
+                }
+
             results["evaluation"] = {
                 "overall_assessment": evaluation.overall_assessment,
                 "progress_summary": evaluation.progress_summary,
                 "next_week_focus": evaluation.next_week_focus,
                 "warnings": evaluation.warnings,
-                "confidence_score": evaluation.confidence_score
+                "confidence_score": evaluation.confidence_score,
+                "lifestyle_insights": lifestyle_insights_dict
             }
             results["modifications_proposed"] = len(evaluation.modifications)
 
-            # Store evaluation in daily review (with user context if provided)
-            self._store_daily_review(evaluation, user_context=user_context)
+            # Store evaluation in daily review (with user context and evaluation type)
+            self._store_daily_review(
+                evaluation,
+                user_context=user_context,
+                evaluation_type=evaluation_type
+            )
 
             # If modifications are needed and confidence is high, apply them
             if evaluation.modifications and evaluation.confidence_score >= 0.7:
@@ -337,11 +357,16 @@ class TrainingPlanManager:
             results["errors"].append(error_msg)
 
             # Store a failed evaluation record so we have history
-            self._store_failed_evaluation(user_context, error_msg)
+            self._store_failed_evaluation(user_context, error_msg, evaluation_type)
 
         return results
 
-    def _store_failed_evaluation(self, user_context: Optional[str], error_msg: str) -> None:
+    def _store_failed_evaluation(
+        self,
+        user_context: Optional[str],
+        error_msg: str,
+        evaluation_type: str = "nightly"
+    ) -> None:
         """Store a record of a failed evaluation attempt. Updates existing if present."""
         try:
             today = date.today()
@@ -362,6 +387,7 @@ class TrainingPlanManager:
                 existing.proposed_adjustments = json.dumps([])
                 existing.approval_status = "error"
                 existing.user_context = user_context
+                existing.evaluation_type = evaluation_type
             else:
                 review = DailyReview(
                     athlete_id=self.athlete_id,
@@ -370,7 +396,8 @@ class TrainingPlanManager:
                     insights=f"Evaluation failed: {error_msg}",
                     proposed_adjustments=json.dumps([]),
                     approval_status="error",
-                    user_context=user_context
+                    user_context=user_context,
+                    evaluation_type=evaluation_type
                 )
                 self.db.add(review)
 
@@ -490,7 +517,12 @@ Test Weeks: 1, 12, 24
 Weekly Structure: Swim A (Mon), Lift A (Tue), VO2 (Wed), Swim B (Thu), Lift B (Fri)
 Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
 
-    def _store_daily_review(self, evaluation: PlanEvaluation, user_context: Optional[str] = None) -> None:
+    def _store_daily_review(
+        self,
+        evaluation: PlanEvaluation,
+        user_context: Optional[str] = None,
+        evaluation_type: str = "nightly"
+    ) -> None:
         """Store the evaluation in the daily_reviews table. Updates existing if present."""
         today = date.today()
 
@@ -516,6 +548,16 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
         ])
         approval_status = "pending" if evaluation.modifications else "no_changes_needed"
 
+        # Convert lifestyle insights to JSON
+        lifestyle_insights_dict = {}
+        for insight in evaluation.lifestyle_insights:
+            lifestyle_insights_dict[insight.category] = {
+                "observation": insight.observation,
+                "severity": insight.severity,
+                "actions": insight.actions
+            }
+        lifestyle_insights_json = json.dumps(lifestyle_insights_dict)
+
         if existing:
             # Update existing review
             existing.progress_summary = progress_summary
@@ -524,6 +566,8 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
             existing.proposed_adjustments = proposed_adjustments
             existing.approval_status = approval_status
             existing.user_context = user_context
+            existing.evaluation_type = evaluation_type
+            existing.lifestyle_insights_json = lifestyle_insights_json
         else:
             # Create new review
             review = DailyReview(
@@ -534,7 +578,9 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                 recommendations=evaluation.next_week_focus,
                 proposed_adjustments=proposed_adjustments,
                 approval_status=approval_status,
-                user_context=user_context
+                user_context=user_context,
+                evaluation_type=evaluation_type,
+                lifestyle_insights_json=lifestyle_insights_json
             )
             self.db.add(review)
 

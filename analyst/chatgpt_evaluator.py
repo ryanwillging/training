@@ -28,6 +28,15 @@ class PlanModification:
 
 
 @dataclass
+class LifestyleInsight:
+    """A lifestyle insight with actionable steps."""
+    category: str  # "health", "recovery", "nutrition", "sleep"
+    observation: str  # What was observed
+    severity: str  # "info", "warning", "alert"
+    actions: List[str]  # Specific actionable steps to take
+
+
+@dataclass
 class PlanEvaluation:
     """Result of AI evaluation of the training plan."""
     overall_assessment: str  # "on_track", "needs_adjustment", "significant_changes_needed"
@@ -36,6 +45,11 @@ class PlanEvaluation:
     next_week_focus: str
     warnings: List[str]
     confidence_score: float
+    lifestyle_insights: List[LifestyleInsight] = None  # Health, recovery, nutrition, sleep insights
+
+    def __post_init__(self):
+        if self.lifestyle_insights is None:
+            self.lifestyle_insights = []
 
 
 class ChatGPTEvaluator:
@@ -45,9 +59,10 @@ class ChatGPTEvaluator:
     """
 
     # System context for the AI
-    SYSTEM_CONTEXT = """You are an expert sports science coach and training plan analyst.
+    SYSTEM_CONTEXT = """You are an expert sports science coach, nutritionist, and training plan analyst.
 Your role is to evaluate an athlete's training progress against their 24-week performance plan
-and recommend modifications when necessary.
+and recommend modifications when necessary. You also provide lifestyle insights on health, recovery,
+nutrition, and sleep based on their wellness data.
 
 The athlete's primary goals are:
 1. Maintain ~14% body fat
@@ -59,7 +74,16 @@ Training structure is 3-5 hours/week:
 - Swim 2 days/week (Swim A: threshold/CSS, Swim B: VO2/400-specific)
 - Other workouts 2-3 days/week (Lift A: lower body, Lift B: upper body, VO2 sessions)
 
-Test weeks (400 TT) occur in weeks 1, 12, and 24.
+PLAN ANCHORING:
+- The 24-week plan started on January 20, 2025
+- Week numbers are fixed and should NOT be recalculated
+- Test weeks (400 TT) occur in weeks 2, 12, and 24
+- Never recreate the entire plan - only adjust near-term workouts
+
+MODIFICATION SCOPE:
+- Only modify workouts in the NEXT 7 DAYS
+- Leave future workouts unchanged - they will be evaluated in future runs
+- Each evaluation should be surgical and targeted
 
 When evaluating, consider:
 - Wellness data (sleep, HRV, training readiness, body battery)
@@ -68,12 +92,26 @@ When evaluating, consider:
 - Recovery status
 - Goal alignment
 
+LIFESTYLE INSIGHTS:
+Provide detailed, actionable insights in four categories:
+1. **Health**: Overall health observations from wellness metrics
+2. **Recovery**: Training readiness, recovery status, and recommendations
+3. **Nutrition**: Diet considerations based on goals and training load
+4. **Sleep**: Sleep quality analysis and optimization tips
+
+For each insight, provide:
+- A clear observation of what you see in the data
+- Severity level (info, warning, alert)
+- 2-4 SPECIFIC, ACTIONABLE steps the athlete can take (e.g., "Set a 10pm bedtime alarm", "Add 500ml water intake before noon")
+
 IMPORTANT GUIDELINES:
-- Be VERY conservative with modifications - only suggest changes when clearly warranted
+- Be VERY conservative with workout modifications - only suggest changes when clearly warranted
 - Minimize the number of workouts affected - prefer surgical, targeted changes over broad modifications
 - Always explain your reasoning clearly and specifically
-- If no changes are needed, say so - don't suggest changes just for the sake of it
-- Consider the athlete's user notes/context if provided"""
+- If no workout changes are needed, say so - don't suggest changes just for the sake of it
+- ALWAYS provide lifestyle insights even if no workout changes are needed
+- Consider the athlete's user notes/context if provided
+- Make actions specific enough to be automated (calendar reminders, app notifications, etc.)"""
 
     def __init__(self, model: str = "o1-preview"):
         """
@@ -198,8 +236,9 @@ IMPORTANT GUIDELINES:
 
 ## Current Status
 - **Week**: {current_week} of 24
+- **Plan Start Date**: January 20, 2025 (fixed anchor - do not recalculate)
 - **Phase**: {"Test/Baseline" if current_week == 1 else "Build Phase 1 (Weeks 1-8)" if current_week <= 8 else "Build Phase 2 (Weeks 9-16)" if current_week <= 16 else "Peak Phase (Weeks 17-24)"}
-- **Is Test Week**: {"Yes" if current_week in [1, 12, 24] else "No"}
+- **Is Test Week**: {"Yes" if current_week in [2, 12, 24] else "No"}
 
 ## Wellness Data (Last 7 Days Average)
 {json.dumps(wellness_data, indent=2, default=str)}
@@ -224,16 +263,25 @@ Please analyze this data and provide:
 
 2. **Progress Summary**: Brief summary of how the athlete is progressing toward each goal.
 
-3. **Recommended Modifications** (if any): For each modification, specify:
+3. **Recommended Modifications** (NEXT 7 DAYS ONLY): For each modification, specify:
    - Type (intensity, volume, reschedule, add_rest, swap_workout)
-   - Week and day affected
+   - Week and day affected (must be within next 7 days)
    - Description of the change
    - Reason for the change
    - Priority (high/medium/low)
+   NOTE: Leave workouts beyond 7 days unchanged.
 
 4. **Next Week Focus**: What should be the primary focus for the upcoming week?
 
 5. **Warnings**: Any concerns or red flags to watch.
+
+6. **Lifestyle Insights**: Provide detailed insights with SPECIFIC, ACTIONABLE steps for:
+   - **Health**: Overall health observations
+   - **Recovery**: Training readiness and recovery recommendations
+   - **Nutrition**: Diet considerations for goals and training
+   - **Sleep**: Sleep quality and optimization
+
+   Each insight should have 2-4 concrete actions (e.g., "Set 10pm bedtime alarm", "Drink 500ml water before noon").
 
 Please respond in the following JSON format:
 ```json
@@ -242,10 +290,10 @@ Please respond in the following JSON format:
     "progress_summary": "...",
     "modifications": [
         {{
-            "modification_type": "...",
+            "modification_type": "intensity|volume|reschedule|add_rest|swap_workout",
             "week_number": N,
             "day_of_week": N or null,
-            "workout_type": "..." or null,
+            "workout_type": "swim_a|swim_b|lift_a|lift_b|vo2" or null,
             "description": "...",
             "reason": "...",
             "priority": "high|medium|low"
@@ -253,7 +301,29 @@ Please respond in the following JSON format:
     ],
     "next_week_focus": "...",
     "warnings": ["..."],
-    "confidence_score": 0.0-1.0
+    "confidence_score": 0.0-1.0,
+    "lifestyle_insights": {{
+        "health": {{
+            "observation": "What you observe about overall health...",
+            "severity": "info|warning|alert",
+            "actions": ["Specific action 1", "Specific action 2", "Specific action 3"]
+        }},
+        "recovery": {{
+            "observation": "What you observe about recovery status...",
+            "severity": "info|warning|alert",
+            "actions": ["Specific action 1", "Specific action 2"]
+        }},
+        "nutrition": {{
+            "observation": "What you observe about nutrition needs...",
+            "severity": "info|warning|alert",
+            "actions": ["Specific action 1", "Specific action 2"]
+        }},
+        "sleep": {{
+            "observation": "What you observe about sleep patterns...",
+            "severity": "info|warning|alert",
+            "actions": ["Specific action 1", "Specific action 2"]
+        }}
+    }}
 }}
 ```
 """
@@ -288,13 +358,27 @@ Please respond in the following JSON format:
                     ai_confidence=data.get("confidence_score", 0.5)
                 ))
 
+            # Parse lifestyle insights
+            lifestyle_insights = []
+            insights_data = data.get("lifestyle_insights", {})
+            for category in ["health", "recovery", "nutrition", "sleep"]:
+                if category in insights_data:
+                    insight = insights_data[category]
+                    lifestyle_insights.append(LifestyleInsight(
+                        category=category,
+                        observation=insight.get("observation", ""),
+                        severity=insight.get("severity", "info"),
+                        actions=insight.get("actions", [])
+                    ))
+
             return PlanEvaluation(
                 overall_assessment=data.get("overall_assessment", "unknown"),
                 progress_summary=data.get("progress_summary", ""),
                 modifications=modifications,
                 next_week_focus=data.get("next_week_focus", ""),
                 warnings=data.get("warnings", []),
-                confidence_score=data.get("confidence_score", 0.5)
+                confidence_score=data.get("confidence_score", 0.5),
+                lifestyle_insights=lifestyle_insights
             )
 
         except json.JSONDecodeError as e:
@@ -306,7 +390,8 @@ Please respond in the following JSON format:
                 modifications=[],
                 next_week_focus="Review AI response manually",
                 warnings=["Failed to parse AI response as JSON"],
-                confidence_score=0.0
+                confidence_score=0.0,
+                lifestyle_insights=[]
             )
 
     def evaluate_modification(

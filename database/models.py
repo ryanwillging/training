@@ -266,6 +266,14 @@ class DailyReview(Base):
     # User-provided context for AI evaluation
     user_context = Column(Text)  # Notes provided by user when running evaluation
 
+    # Evaluation metadata
+    evaluation_type = Column(String, default="nightly")  # "nightly" or "on_demand"
+
+    # Structured lifestyle insights (JSON) - health, recovery, nutrition, sleep
+    # Each category has: observation, severity (info/warning/alert), actions (list of actionable steps)
+    # Example: {"health": {"observation": "...", "severity": "warning", "actions": ["Step 1", "Step 2"]}}
+    lifestyle_insights_json = Column(Text)
+
     # Export tracking
     adjustments_applied = Column(
         Boolean, default=False
