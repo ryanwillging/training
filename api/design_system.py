@@ -1045,8 +1045,15 @@ def wrap_page(content: str, title: str, current_path: Optional[str] = None) -> s
         <nav class="md-nav">
             <div class="md-nav-container">
                 <a href="/dashboard" class="md-nav-brand">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/>
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="currentColor">
+                        <rect x="2" y="9" width="3" height="6" rx="1"/>
+                        <rect x="19" y="9" width="3" height="6" rx="1"/>
+                        <rect x="5" y="7" width="3" height="10" rx="1"/>
+                        <rect x="16" y="7" width="3" height="10" rx="1"/>
+                        <rect x="8" y="11" width="8" height="2" rx="0.5"/>
+                        <path d="M12 2l2 3h-4l2-3z" opacity="0.7"/>
+                        <path d="M10 4l1 1.5h-2l1-1.5z" opacity="0.5"/>
+                        <path d="M14 4l1 1.5h-2l1-1.5z" opacity="0.5"/>
                     </svg>
                     Training
                 </a>
