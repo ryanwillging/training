@@ -1968,20 +1968,10 @@ class handler(BaseHTTPRequestHandler):
         # Build review cards
         cards_html = ""
         for review in reviews:
-            progress_data = json.loads(review.progress_summary) if review.progress_summary else {}
             adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
             lifestyle_insights = json.loads(review.lifestyle_insights_json) if review.lifestyle_insights_json else {}
 
             status = review.approval_status or "pending"
-            status_style = STATUS_COLORS.get(status, STATUS_COLORS["pending"])
-
-            # Evaluation type (nightly vs on_demand)
-            eval_type = getattr(review, 'evaluation_type', None) or "nightly"
-            eval_style = EVAL_TYPE_STYLES.get(eval_type, EVAL_TYPE_STYLES["nightly"])
-
-            assessment = progress_data.get("overall_assessment", "unknown")
-            assessment_style = ASSESSMENT_COLORS.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
-            confidence = progress_data.get("confidence_score", 0)
 
             review_date = review.review_date
             if review_date == today:
@@ -2122,18 +2112,6 @@ class handler(BaseHTTPRequestHandler):
                     <div class="review-date">
                         <span class="date-label">{date_label}</span>
                         <span class="date-full">{review_date.strftime("%A")}</span>
-                    </div>
-                    <div class="review-badges">
-                        <span class="eval-type-badge" style="background: {eval_style["bg"]}; color: {eval_style["text"]};">
-                            {eval_style["icon"]} {eval_style["label"]}
-                        </span>
-                        <span class="status-badge" style="background: {status_style["bg"]}; color: {status_style["text"]};">
-                            {status_style["label"]}
-                        </span>
-                        <span class="assessment-badge" style="background: {assessment_style["bg"]}; color: {assessment_style["text"]};">
-                            {assessment_style["icon"]} {assessment.replace("_", " ").title()}
-                        </span>
-                        {f'<span class="confidence-badge">{int(confidence * 100)}% confidence</span>' if confidence else ''}
                     </div>
                     <span class="expand-icon">▼</span>
                 </div>
@@ -2419,19 +2397,6 @@ class handler(BaseHTTPRequestHandler):
             .date-label {{ font-size: 18px; font-weight: 600; color: var(--md-on-surface); }}
             .date-full {{ font-size: 13px; color: var(--md-on-surface-variant); }}
 
-            .review-badges {{ display: flex; gap: 8px; flex-wrap: wrap; }}
-            .status-badge, .assessment-badge, .confidence-badge {{
-                font-size: 11px;
-                padding: 4px 10px;
-                border-radius: var(--radius-full);
-                font-weight: 500;
-            }}
-            .confidence-badge {{
-                background: var(--md-surface);
-                color: var(--md-on-surface-variant);
-                border: 1px solid var(--md-outline-variant);
-            }}
-
             .user-context-section {{
                 padding: 12px 20px;
                 background: #f3e5f5;
@@ -2588,14 +2553,6 @@ class handler(BaseHTTPRequestHandler):
                 background: #ffebee;
                 color: #c62828;
                 border-radius: var(--radius-md);
-            }}
-
-            /* Evaluation type badge */
-            .eval-type-badge {{
-                font-size: 11px;
-                padding: 4px 10px;
-                border-radius: var(--radius-full);
-                font-weight: 500;
             }}
 
             /* Collapsible sections */

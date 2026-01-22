@@ -887,17 +887,10 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
     cards_html = ""
     for review in reviews:
         # Parse data
-        progress_data = json.loads(review.progress_summary) if review.progress_summary else {}
         adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
 
-        # Status
+        # Status (used for card styling)
         status = review.approval_status or "pending"
-        status_style = STATUS_COLORS.get(status, STATUS_COLORS["pending"])
-
-        # Assessment
-        assessment = progress_data.get("overall_assessment", "unknown")
-        assessment_style = ASSESSMENT_COLORS.get(assessment, {"bg": "#f5f5f5", "text": "#666", "icon": "?"})
-        confidence = progress_data.get("confidence_score", 0)
 
         # Date formatting
         review_date = review.review_date
@@ -1000,15 +993,6 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
                 <div class="review-date">
                     <span class="date-label">{date_label}</span>
                     <span class="date-full">{review_date.strftime("%A")}</span>
-                </div>
-                <div class="review-badges">
-                    <span class="status-badge" style="background: {status_style["bg"]}; color: {status_style["text"]};">
-                        {status_style["label"]}
-                    </span>
-                    <span class="assessment-badge" style="background: {assessment_style["bg"]}; color: {assessment_style["text"]};">
-                        {assessment_style["icon"]} {assessment.replace("_", " ").title()}
-                    </span>
-                    {f'<span class="confidence-badge">{int(confidence * 100)}% confidence</span>' if confidence else ''}
                 </div>
             </div>
             {user_context_html}
@@ -1294,25 +1278,6 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
         .date-full {{
             font-size: 13px;
             color: var(--md-on-surface-variant);
-        }}
-
-        .review-badges {{
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }}
-
-        .status-badge, .assessment-badge, .confidence-badge {{
-            font-size: 11px;
-            padding: 4px 10px;
-            border-radius: var(--radius-full);
-            font-weight: 500;
-        }}
-
-        .confidence-badge {{
-            background: var(--md-surface);
-            color: var(--md-on-surface-variant);
-            border: 1px solid var(--md-outline-variant);
         }}
 
         .user-context-section {{
