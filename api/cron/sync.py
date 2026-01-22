@@ -143,6 +143,10 @@ async def cron_sync(
                 }
                 if evaluation_results.get("errors"):
                     results["errors"].extend([f"Plan evaluation: {e}" for e in evaluation_results["errors"]])
+
+                # Clean up stale reviews (keep approved indefinitely, delete others after 1 day)
+                cleanup_results = plan_manager.cleanup_stale_reviews()
+                results["review_cleanup"] = cleanup_results
             else:
                 results["plan_evaluation"] = {"status": "plan_not_initialized"}
         except Exception as e:

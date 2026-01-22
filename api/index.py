@@ -459,7 +459,43 @@ class handler(BaseHTTPRequestHandler):
                 db.close()
                 return self.send_json(500, {"error": str(e)})
 
-        # Review action (approve/reject)
+        # Individual modification action (approve/reject single modification)
+        # Path: /api/plan/reviews/{id}/modifications/{index}/action
+        if "/modifications/" in path and path.endswith("/action"):
+            parts = path.split("/")
+            try:
+                # /api/plan/reviews/{id}/modifications/{index}/action
+                review_id = int(parts[4])
+                mod_index = int(parts[6])
+            except (IndexError, ValueError):
+                return self.send_json(400, {"error": "Invalid review ID or modification index"})
+
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+            try:
+                data = json.loads(body)
+            except:
+                return self.send_json(400, {"error": "Invalid JSON"})
+
+            action = data.get("action")
+            if action not in ("approve", "reject"):
+                return self.send_json(400, {"error": "Action must be 'approve' or 'reject'"})
+
+            db = get_db_session()
+            if db:
+                try:
+                    result = self._action_single_modification(db, review_id, mod_index, action)
+                    db.close()
+                    return self.send_json(200, result)
+                except ValueError as e:
+                    db.close()
+                    return self.send_json(400, {"error": str(e)})
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(400, {"error": "Database not configured"})
+
+        # Review action (approve/reject all pending modifications)
         if path.startswith("/api/plan/reviews/") and path.endswith("/action"):
             # Extract review_id from path
             parts = path.split("/")
@@ -1892,6 +1928,15 @@ class handler(BaseHTTPRequestHandler):
             DailyReview.review_date >= cutoff
         ).order_by(DailyReview.review_date.desc()).all()
 
+        # Count total pending modifications across all reviews
+        total_pending_mods = 0
+        for r in reviews:
+            if r.proposed_adjustments:
+                adjustments = json.loads(r.proposed_adjustments)
+                total_pending_mods += sum(1 for adj in adjustments if adj.get("status", "pending") == "pending")
+
+        pending_count = total_pending_mods
+
         # Get plan status
         goals_data = json.loads(athlete.goals) if athlete.goals else {}
         plan_info = goals_data.get("training_plan", {})
@@ -1920,10 +1965,6 @@ class handler(BaseHTTPRequestHandler):
             '''
             return wrap_page(content, "Plan Reviews", "/reviews")
 
-        # Count pending reviews
-        pending_reviews = [r for r in reviews if r.approval_status == "pending"]
-        pending_count = len(pending_reviews)
-
         # Build review cards
         cards_html = ""
         for review in reviews:
@@ -1950,42 +1991,71 @@ class handler(BaseHTTPRequestHandler):
             else:
                 date_label = review_date.strftime("%b %d, %Y")
 
-            # Build modifications list
+            # Build modifications list with individual status and actions
             mods_html = ""
+            pending_mod_count = 0
             if adjustments:
-                for adj in adjustments:
+                for idx, adj in enumerate(adjustments):
                     adj_type = adj.get("type", "unknown")
                     adj_desc = adj.get("description", "No description")
                     adj_reason = adj.get("reason", "")
                     adj_priority = adj.get("priority", "medium")
                     adj_week = adj.get("week", "?")
+                    mod_status = adj.get("status", "pending")
+
+                    if mod_status == "pending":
+                        pending_mod_count += 1
 
                     p_style = PRIORITY_COLORS.get(adj_priority, PRIORITY_COLORS["medium"])
 
+                    # Status badge colors
+                    mod_status_styles = {
+                        "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending"},
+                        "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
+                        "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"}
+                    }
+                    s_style = mod_status_styles.get(mod_status, mod_status_styles["pending"])
+
+                    # Individual action buttons (only for pending modifications)
+                    mod_actions_html = ""
+                    if mod_status == "pending":
+                        mod_actions_html = f'''
+                        <div class="mod-actions">
+                            <button class="mod-btn approve-mod" onclick="actionModification({review.id}, {idx}, 'approve')" title="Approve this modification">✓</button>
+                            <button class="mod-btn reject-mod" onclick="actionModification({review.id}, {idx}, 'reject')" title="Reject this modification">✗</button>
+                        </div>
+                        '''
+
                     mods_html += f'''
-                    <div class="modification-item">
+                    <div class="modification-item {'mod-actioned' if mod_status != 'pending' else ''}">
                         <div class="mod-header">
                             <span class="mod-type">{adj_type.replace("_", " ").title()}</span>
                             <span class="mod-priority" style="background: {p_style["bg"]}; color: {p_style["text"]};">{adj_priority.upper()}</span>
                             <span class="mod-week">Week {adj_week}</span>
+                            <span class="mod-status" style="background: {s_style["bg"]}; color: {s_style["text"]};">{s_style["label"]}</span>
                         </div>
-                        <div class="mod-description">{adj_desc}</div>
-                        {f'<div class="mod-reason">{adj_reason}</div>' if adj_reason else ''}
+                        <div class="mod-content">
+                            <div class="mod-details">
+                                <div class="mod-description">{adj_desc}</div>
+                                {f'<div class="mod-reason">{adj_reason}</div>' if adj_reason else ''}
+                            </div>
+                            {mod_actions_html}
+                        </div>
                     </div>
                     '''
             else:
                 mods_html = '<p class="text-secondary" style="padding: 16px;">No modifications proposed</p>'
 
-            # Action buttons
+            # Action buttons for bulk approve/reject (only if there are pending modifications)
             actions_html = ""
-            if status == "pending":
+            if pending_mod_count > 0:
                 actions_html = f'''
                 <div class="review-actions">
                     <button class="md-btn md-btn-filled approve-btn" onclick="actionReview({review.id}, 'approve')">
-                        ✓ Approve Changes
+                        ✓ Approve All Pending ({pending_mod_count})
                     </button>
                     <button class="md-btn md-btn-outlined reject-btn" onclick="actionReview({review.id}, 'reject')">
-                        ✗ Reject
+                        ✗ Reject All Pending
                     </button>
                 </div>
                 '''
@@ -2090,8 +2160,8 @@ class handler(BaseHTTPRequestHandler):
             <div class="pending-alert">
                 <div class="alert-icon">⚠️</div>
                 <div class="alert-content">
-                    <strong>{pending_count} review{"s" if pending_count > 1 else ""} pending approval</strong>
-                    <p>Review the AI-suggested modifications and approve or reject them.</p>
+                    <strong>{pending_count} modification{"s" if pending_count > 1 else ""} pending approval</strong>
+                    <p>Review the AI-suggested modifications and approve or reject them individually or in bulk.</p>
                 </div>
             </div>
             '''
@@ -2171,6 +2241,25 @@ class handler(BaseHTTPRequestHandler):
                     headers: {{'Content-Type': 'application/json'}},
                     body: JSON.stringify({{ action, notes }})
                 }});
+                if (response.ok) {{
+                    location.reload();
+                }} else {{
+                    const data = await response.json();
+                    alert('Error: ' + (data.detail || data.error || 'Failed'));
+                }}
+            }} catch (e) {{
+                alert('Error: ' + e.message);
+            }}
+        }}
+
+        async function actionModification(reviewId, modIndex, action) {{
+            try {{
+                const response = await fetch(`/api/plan/reviews/${{reviewId}}/modifications/${{modIndex}}/action`, {{
+                    method: 'POST',
+                    headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{ action }})
+                }});
+
                 if (response.ok) {{
                     location.reload();
                 }} else {{
@@ -2387,6 +2476,10 @@ class handler(BaseHTTPRequestHandler):
                 border-radius: var(--radius-md);
                 border-left: 4px solid var(--md-primary);
             }}
+            .modification-item.mod-actioned {{
+                opacity: 0.7;
+                border-left-color: #9e9e9e;
+            }}
             .mod-header {{
                 display: flex;
                 align-items: center;
@@ -2402,8 +2495,44 @@ class handler(BaseHTTPRequestHandler):
                 font-weight: 600;
             }}
             .mod-week {{ font-size: 12px; color: var(--md-on-surface-variant); }}
+            .mod-status {{
+                font-size: 10px;
+                padding: 2px 8px;
+                border-radius: var(--radius-full);
+                font-weight: 600;
+                margin-left: auto;
+            }}
+            .mod-content {{
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 16px;
+            }}
+            .mod-details {{ flex: 1; }}
             .mod-description {{ color: var(--md-on-surface); margin-bottom: 6px; }}
             .mod-reason {{ font-size: 13px; color: var(--md-on-surface-variant); font-style: italic; }}
+            .mod-actions {{
+                display: flex;
+                gap: 8px;
+                flex-shrink: 0;
+            }}
+            .mod-btn {{
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                border: none;
+                cursor: pointer;
+                font-size: 14px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                transition: transform 0.1s, background 0.2s;
+            }}
+            .mod-btn:hover {{ transform: scale(1.1); }}
+            .mod-btn.approve-mod {{ background: #e8f5e9; color: #2e7d32; }}
+            .mod-btn.approve-mod:hover {{ background: #c8e6c9; }}
+            .mod-btn.reject-mod {{ background: #ffebee; color: #c62828; }}
+            .mod-btn.reject-mod:hover {{ background: #ffcdd2; }}
 
             .review-actions {{
                 display: flex;
@@ -2772,8 +2901,9 @@ class handler(BaseHTTPRequestHandler):
         }
 
     def _action_review(self, db, review_id, action, notes):
-        """Approve or reject a review. When approved, syncs changes to Garmin."""
+        """Approve or reject all pending modifications in a review. When approved, syncs changes to Garmin."""
         from database.models import Athlete, DailyReview, PlanAdjustment
+        from analyst.plan_manager import TrainingPlanManager
 
         athlete = db.query(Athlete).first()
         if not athlete:
@@ -2787,48 +2917,61 @@ class handler(BaseHTTPRequestHandler):
         if not review:
             raise Exception("Review not found")
 
-        if review.approval_status not in ("pending", "no_changes_needed"):
-            raise Exception(f"Review already {review.approval_status}")
+        # Parse adjustments
+        adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
+
+        # Find pending modifications
+        pending_mods = [adj for adj in adjustments if adj.get("status", "pending") == "pending"]
+
+        if not pending_mods:
+            raise Exception("No pending modifications to action")
 
         garmin_results = None
+        action_time = datetime.utcnow().isoformat()
+
+        # Update status of all pending modifications
+        for adj in adjustments:
+            if adj.get("status", "pending") == "pending":
+                adj["status"] = action + "d"  # 'approved' or 'rejected'
+                adj["actioned_at"] = action_time
 
         if action == "approve":
-            review.approval_status = "approved"
-            review.approved_at = datetime.utcnow()
             review.approval_notes = notes
 
-            if review.proposed_adjustments:
-                adjustments = json.loads(review.proposed_adjustments)
+            # Create PlanAdjustment records for tracking (only for pending mods)
+            for adj in pending_mods:
+                plan_adj = PlanAdjustment(
+                    plan_id=1,
+                    review_id=review.id,
+                    adjustment_date=get_eastern_today(),
+                    adjustment_type=adj.get("type", "unknown"),
+                    reasoning=adj.get("reason", ""),
+                    changes=json.dumps(adj)
+                )
+                db.add(plan_adj)
 
-                # Create PlanAdjustment records for tracking
-                for adj in adjustments:
-                    plan_adj = PlanAdjustment(
-                        plan_id=1,
-                        review_id=review.id,
-                        adjustment_date=get_eastern_today(),
-                        adjustment_type=adj.get("type", "unknown"),
-                        reasoning=adj.get("reason", ""),
-                        changes=json.dumps(adj)
-                    )
-                    db.add(plan_adj)
-
-                # Apply modifications to ScheduledWorkouts and sync to Garmin
-                try:
-                    from analyst.plan_manager import TrainingPlanManager
-                    manager = TrainingPlanManager(db, athlete.id)
-                    garmin_results = manager.apply_approved_modifications(
-                        adjustments,
-                        sync_to_garmin=True
-                    )
-                    review.adjustments_applied = True
-                except Exception as e:
-                    # Still mark as approved even if Garmin sync fails
-                    review.adjustments_applied = True
-                    garmin_results = {"error": str(e)}
+            # Apply modifications to ScheduledWorkouts and sync to Garmin
+            try:
+                manager = TrainingPlanManager(db, athlete.id)
+                garmin_results = manager.apply_approved_modifications(
+                    pending_mods,
+                    sync_to_garmin=True
+                )
+                review.adjustments_applied = True
+            except Exception as e:
+                # Still mark as approved even if Garmin sync fails
+                review.adjustments_applied = True
+                garmin_results = {"error": str(e)}
 
         elif action == "reject":
-            review.approval_status = "rejected"
             review.approval_notes = notes
+
+        # Update the review with modified adjustments
+        review.proposed_adjustments = json.dumps(adjustments)
+
+        # Recalculate overall review status
+        review.approval_status = TrainingPlanManager.calculate_review_status(adjustments)
+        review.approved_at = datetime.utcnow()
 
         db.commit()
 
@@ -2836,12 +2979,94 @@ class handler(BaseHTTPRequestHandler):
             "status": "success",
             "review_id": review_id,
             "action": action,
+            "modifications_actioned": len(pending_mods),
             "approval_status": review.approval_status
         }
 
         if garmin_results:
             result["garmin_sync"] = garmin_results
 
+        return result
+
+    def _action_single_modification(self, db, review_id, mod_index, action):
+        """Approve or reject a single modification within a review."""
+        from database.models import Athlete, DailyReview, PlanAdjustment
+        from analyst.plan_manager import TrainingPlanManager
+
+        athlete = db.query(Athlete).first()
+        if not athlete:
+            raise ValueError("No athlete found")
+
+        review = db.query(DailyReview).filter(
+            DailyReview.id == review_id,
+            DailyReview.athlete_id == athlete.id
+        ).first()
+
+        if not review:
+            raise ValueError("Review not found")
+
+        # Parse adjustments
+        adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
+
+        if not adjustments:
+            raise ValueError("No modifications in this review")
+
+        if mod_index < 0 or mod_index >= len(adjustments):
+            raise ValueError(f"Invalid modification index: {mod_index}")
+
+        mod = adjustments[mod_index]
+
+        # Check if already actioned
+        current_status = mod.get("status", "pending")
+        if current_status != "pending":
+            raise ValueError(f"Modification already {current_status}")
+
+        result = {
+            "status": "success",
+            "review_id": review_id,
+            "modification_index": mod_index,
+            "action": action,
+            "garmin_sync": None
+        }
+
+        # Update the modification status
+        mod["status"] = action + "d"  # 'approved' or 'rejected'
+        mod["actioned_at"] = datetime.utcnow().isoformat()
+
+        if action == "approve":
+            # Apply this single modification
+            try:
+                manager = TrainingPlanManager(db, athlete.id)
+                garmin_results = manager.apply_approved_modifications([mod], sync_to_garmin=True)
+                result["garmin_sync"] = garmin_results
+
+                # Create PlanAdjustment record for audit trail
+                plan_adj = PlanAdjustment(
+                    plan_id=1,
+                    review_id=review.id,
+                    adjustment_date=get_eastern_today(),
+                    adjustment_type=mod.get("type", "unknown"),
+                    reasoning=mod.get("reason", ""),
+                    changes=json.dumps(mod)
+                )
+                db.add(plan_adj)
+            except Exception as e:
+                result["garmin_sync"] = {"error": str(e)}
+
+        # Update the review with modified adjustments
+        review.proposed_adjustments = json.dumps(adjustments)
+
+        # Recalculate overall review status
+        new_review_status = TrainingPlanManager.calculate_review_status(adjustments)
+        review.approval_status = new_review_status
+
+        # If all modifications have been actioned, mark the timestamp
+        if new_review_status in ("approved", "rejected"):
+            review.approved_at = datetime.utcnow()
+
+        db.commit()
+
+        result["new_review_status"] = new_review_status
         return result
 
     def _run_evaluation(self, db, user_context=None):

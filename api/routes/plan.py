@@ -556,6 +556,43 @@ class EvaluationRequest(BaseModel):
     user_context: Optional[str] = None
 
 
+class ModificationActionRequest(BaseModel):
+    """Request to approve or reject a single modification."""
+    action: str  # 'approve' or 'reject'
+
+
+@router.post("/reviews/{review_id}/modifications/{mod_index}/action")
+async def action_modification(review_id: int, mod_index: int, request: ModificationActionRequest):
+    """
+    Approve or reject a single modification within a review.
+
+    Args:
+        review_id: ID of the DailyReview
+        mod_index: Index of the modification in the adjustments list (0-based)
+        request: Action to take (approve/reject)
+
+    Returns:
+        Result of the action including updated review status and any Garmin sync results
+    """
+    if request.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
+
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        manager = TrainingPlanManager(db, athlete_id)
+        result = manager.action_single_modification(review_id, mod_index, request.action)
+        return result
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
 @router.get("/reviews-page", response_class=HTMLResponse)
 async def get_reviews_page():
     """
@@ -590,15 +627,18 @@ async def get_reviews_page():
 @router.post("/reviews/{review_id}/action")
 async def action_review(review_id: int, request: ReviewActionRequest):
     """
-    Approve or reject a daily review's proposed modifications.
+    Approve or reject all pending modifications in a review.
 
-    When approved, modifications are applied to the training plan and
-    synced to Garmin Connect (replacing existing workouts if needed).
+    When approved, only pending modifications are applied to the training plan
+    and synced to Garmin Connect. Already-actioned modifications are skipped.
 
     Args:
         review_id: ID of the DailyReview
         request: Action to take (approve/reject) and optional notes
     """
+    if request.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
+
     athlete_id = int(os.getenv("ATHLETE_ID", "1"))
     db = SessionLocal()
 
@@ -611,54 +651,64 @@ async def action_review(review_id: int, request: ReviewActionRequest):
         if not review:
             raise HTTPException(status_code=404, detail="Review not found")
 
-        if review.approval_status not in ("pending", "no_changes_needed"):
+        # Parse adjustments
+        adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
+
+        # Find pending modifications
+        pending_mods = [adj for adj in adjustments if adj.get("status", "pending") == "pending"]
+
+        if not pending_mods:
             raise HTTPException(
                 status_code=400,
-                detail=f"Review already {review.approval_status}"
+                detail="No pending modifications to action"
             )
 
         garmin_results = None
+        action_time = datetime.utcnow().isoformat()
+
+        # Update status of all pending modifications
+        for adj in adjustments:
+            if adj.get("status", "pending") == "pending":
+                adj["status"] = request.action + "d"  # 'approved' or 'rejected'
+                adj["actioned_at"] = action_time
 
         if request.action == "approve":
-            review.approval_status = "approved"
-            review.approved_at = datetime.utcnow()
             review.approval_notes = request.notes
 
-            # Apply the modifications if approved
-            if review.proposed_adjustments:
-                adjustments = json.loads(review.proposed_adjustments)
+            # Create PlanAdjustment records for tracking (only for pending mods)
+            for adj in pending_mods:
+                plan_adj = PlanAdjustment(
+                    plan_id=1,  # Default plan
+                    review_id=review.id,
+                    adjustment_date=get_eastern_today(),
+                    adjustment_type=adj.get("type", "unknown"),
+                    reasoning=adj.get("reason", ""),
+                    changes=json.dumps(adj)
+                )
+                db.add(plan_adj)
 
-                # Create PlanAdjustment records for tracking
-                for adj in adjustments:
-                    plan_adj = PlanAdjustment(
-                        plan_id=1,  # Default plan
-                        review_id=review.id,
-                        adjustment_date=get_eastern_today(),
-                        adjustment_type=adj.get("type", "unknown"),
-                        reasoning=adj.get("reason", ""),
-                        changes=json.dumps(adj)
-                    )
-                    db.add(plan_adj)
-
-                # Apply modifications to ScheduledWorkouts and sync to Garmin
-                try:
-                    manager = TrainingPlanManager(db, athlete_id)
-                    garmin_results = manager.apply_approved_modifications(
-                        adjustments,
-                        sync_to_garmin=True
-                    )
-                    review.adjustments_applied = True
-                except Exception as e:
-                    # Still mark as approved even if Garmin sync fails
-                    review.adjustments_applied = True
-                    garmin_results = {"error": str(e)}
+            # Apply modifications to ScheduledWorkouts and sync to Garmin
+            try:
+                manager = TrainingPlanManager(db, athlete_id)
+                garmin_results = manager.apply_approved_modifications(
+                    pending_mods,
+                    sync_to_garmin=True
+                )
+                review.adjustments_applied = True
+            except Exception as e:
+                # Still mark as approved even if Garmin sync fails
+                review.adjustments_applied = True
+                garmin_results = {"error": str(e)}
 
         elif request.action == "reject":
-            review.approval_status = "rejected"
             review.approval_notes = request.notes
 
-        else:
-            raise HTTPException(status_code=400, detail="Action must be 'approve' or 'reject'")
+        # Update the review with modified adjustments
+        review.proposed_adjustments = json.dumps(adjustments)
+
+        # Recalculate overall review status
+        review.approval_status = TrainingPlanManager.calculate_review_status(adjustments)
+        review.approved_at = datetime.utcnow()
 
         db.commit()
 
@@ -666,6 +716,7 @@ async def action_review(review_id: int, request: ReviewActionRequest):
             "status": "success",
             "review_id": review_id,
             "action": request.action,
+            "modifications_actioned": len(pending_mods),
             "approval_status": review.approval_status
         }
 
@@ -786,9 +837,14 @@ async def get_evaluation_context():
 def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str:
     """Generate HTML content for the reviews page."""
 
-    # Check for pending reviews
-    pending_reviews = [r for r in reviews if r.approval_status == "pending"]
-    pending_count = len(pending_reviews)
+    # Count total pending modifications across all reviews
+    total_pending_mods = 0
+    for r in reviews:
+        if r.proposed_adjustments:
+            adjustments = json.loads(r.proposed_adjustments)
+            total_pending_mods += sum(1 for adj in adjustments if adj.get("status", "pending") == "pending")
+
+    pending_count = total_pending_mods
 
     # Plan info header
     current_week = plan_status.get("current_week", "?")
@@ -852,8 +908,9 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
         else:
             date_label = review_date.strftime("%b %d, %Y")
 
-        # Build modifications list
+        # Build modifications list with individual status and actions
         mods_html = ""
+        pending_mod_count = 0
         if adjustments:
             for idx, adj in enumerate(adjustments):
                 adj_type = adj.get("type", "unknown")
@@ -861,33 +918,61 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
                 adj_reason = adj.get("reason", "")
                 adj_priority = adj.get("priority", "medium")
                 adj_week = adj.get("week", "?")
+                mod_status = adj.get("status", "pending")
+
+                if mod_status == "pending":
+                    pending_mod_count += 1
 
                 p_style = PRIORITY_COLORS.get(adj_priority, PRIORITY_COLORS["medium"])
 
+                # Status badge colors
+                mod_status_styles = {
+                    "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending"},
+                    "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
+                    "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"}
+                }
+                s_style = mod_status_styles.get(mod_status, mod_status_styles["pending"])
+
+                # Individual action buttons (only for pending modifications)
+                mod_actions_html = ""
+                if mod_status == "pending":
+                    mod_actions_html = f'''
+                    <div class="mod-actions">
+                        <button class="mod-btn approve-mod" onclick="actionModification({review.id}, {idx}, 'approve')" title="Approve this modification">✓</button>
+                        <button class="mod-btn reject-mod" onclick="actionModification({review.id}, {idx}, 'reject')" title="Reject this modification">✗</button>
+                    </div>
+                    '''
+
                 mods_html += f'''
-                <div class="modification-item">
+                <div class="modification-item {'mod-actioned' if mod_status != 'pending' else ''}">
                     <div class="mod-header">
                         <span class="mod-type">{adj_type.replace("_", " ").title()}</span>
                         <span class="mod-priority" style="background: {p_style["bg"]}; color: {p_style["text"]};">{adj_priority.upper()}</span>
                         <span class="mod-week">Week {adj_week}</span>
+                        <span class="mod-status" style="background: {s_style["bg"]}; color: {s_style["text"]};">{s_style["label"]}</span>
                     </div>
-                    <div class="mod-description">{adj_desc}</div>
-                    {f'<div class="mod-reason">{adj_reason}</div>' if adj_reason else ''}
+                    <div class="mod-content">
+                        <div class="mod-details">
+                            <div class="mod-description">{adj_desc}</div>
+                            {f'<div class="mod-reason">{adj_reason}</div>' if adj_reason else ''}
+                        </div>
+                        {mod_actions_html}
+                    </div>
                 </div>
                 '''
         else:
             mods_html = '<p class="text-secondary" style="padding: 16px;">No modifications proposed</p>'
 
-        # Action buttons (only for pending reviews)
+        # Action buttons for bulk approve/reject (only if there are pending modifications)
         actions_html = ""
-        if status == "pending":
+        if pending_mod_count > 0:
             actions_html = f'''
             <div class="review-actions">
                 <button class="md-btn md-btn-filled approve-btn" onclick="actionReview({review.id}, 'approve')">
-                    ✓ Approve Changes
+                    ✓ Approve All Pending ({pending_mod_count})
                 </button>
                 <button class="md-btn md-btn-outlined reject-btn" onclick="actionReview({review.id}, 'reject')">
-                    ✗ Reject
+                    ✗ Reject All Pending
                 </button>
             </div>
             '''
@@ -951,8 +1036,8 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
         <div class="pending-alert">
             <div class="alert-icon">⚠️</div>
             <div class="alert-content">
-                <strong>{pending_count} review{"s" if pending_count > 1 else ""} pending approval</strong>
-                <p>Review the AI-suggested modifications and approve or reject them.</p>
+                <strong>{pending_count} modification{"s" if pending_count > 1 else ""} pending approval</strong>
+                <p>Review the AI-suggested modifications and approve or reject them individually or in bulk.</p>
             </div>
         </div>
         '''
@@ -1024,6 +1109,25 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
                 method: 'POST',
                 headers: {{'Content-Type': 'application/json'}},
                 body: JSON.stringify({{ action, notes }})
+            }});
+
+            if (response.ok) {{
+                location.reload();
+            }} else {{
+                const data = await response.json();
+                alert('Error: ' + (data.detail || 'Failed to process action'));
+            }}
+        }} catch (e) {{
+            alert('Error: ' + e.message);
+        }}
+    }}
+
+    async function actionModification(reviewId, modIndex, action) {{
+        try {{
+            const response = await fetch(`/api/plan/reviews/${{reviewId}}/modifications/${{modIndex}}/action`, {{
+                method: 'POST',
+                headers: {{'Content-Type': 'application/json'}},
+                body: JSON.stringify({{ action }})
             }});
 
             if (response.ok) {{
@@ -1266,6 +1370,11 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
             border-left: 4px solid var(--md-primary);
         }}
 
+        .modification-item.mod-actioned {{
+            opacity: 0.7;
+            border-left-color: #9e9e9e;
+        }}
+
         .mod-header {{
             display: flex;
             align-items: center;
@@ -1291,6 +1400,25 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
             color: var(--md-on-surface-variant);
         }}
 
+        .mod-status {{
+            font-size: 10px;
+            padding: 2px 8px;
+            border-radius: var(--radius-full);
+            font-weight: 600;
+            margin-left: auto;
+        }}
+
+        .mod-content {{
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 16px;
+        }}
+
+        .mod-details {{
+            flex: 1;
+        }}
+
         .mod-description {{
             color: var(--md-on-surface);
             margin-bottom: 6px;
@@ -1300,6 +1428,47 @@ def _generate_reviews_html(reviews: list, plan_status: dict, today: date) -> str
             font-size: 13px;
             color: var(--md-on-surface-variant);
             font-style: italic;
+        }}
+
+        .mod-actions {{
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }}
+
+        .mod-btn {{
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s, background 0.2s;
+        }}
+
+        .mod-btn:hover {{
+            transform: scale(1.1);
+        }}
+
+        .mod-btn.approve-mod {{
+            background: #e8f5e9;
+            color: #2e7d32;
+        }}
+
+        .mod-btn.approve-mod:hover {{
+            background: #c8e6c9;
+        }}
+
+        .mod-btn.reject-mod {{
+            background: #ffebee;
+            color: #c62828;
+        }}
+
+        .mod-btn.reject-mod:hover {{
+            background: #ffcdd2;
         }}
 
         .review-actions {{

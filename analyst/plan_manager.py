@@ -5,7 +5,7 @@ Orchestrates plan parsing, scheduling, Garmin sync, and AI evaluation.
 
 import json
 import os
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from typing import Dict, Any, List, Optional, Tuple
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,7 @@ from analyst.workout_scheduler import WorkoutScheduler, PlanAdjuster
 from analyst.chatgpt_evaluator import ChatGPTEvaluator, PlanEvaluation, PlanModification, LifestyleInsight
 from database.models import (
     Athlete, DailyWellness, ScheduledWorkout, DailyReview, Goal, GoalProgress,
-    CompletedActivity, WorkoutAnalysis
+    CompletedActivity, WorkoutAnalysis, PlanAdjustment
 )
 
 # Lazy import for Garmin - not available in Vercel serverless
@@ -540,9 +540,12 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
             {
                 "type": m.modification_type,
                 "week": m.week_number,
+                "workout_type": m.workout_type,
                 "description": m.description,
                 "reason": m.reason,
-                "priority": m.priority
+                "priority": m.priority,
+                "status": "pending",
+                "actioned_at": None
             }
             for m in evaluation.modifications
         ])
@@ -888,3 +891,156 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
             "progress": progress,
             "is_test_week": current_week in [1, 12, 24]
         }
+
+    def cleanup_stale_reviews(self) -> Dict[str, int]:
+        """
+        Clean up stale reviews older than 1 day.
+        Keeps approved reviews indefinitely for audit trail.
+        Deletes: pending, rejected, error, no_changes_needed reviews older than 1 day.
+
+        Returns:
+            Count of deleted reviews by status
+        """
+        cutoff_date = date.today() - timedelta(days=1)
+
+        # Find stale reviews (not approved, older than cutoff)
+        stale_reviews = self.db.query(DailyReview).filter(
+            DailyReview.athlete_id == self.athlete_id,
+            DailyReview.review_date < cutoff_date,
+            DailyReview.approval_status.in_(["pending", "rejected", "error", "no_changes_needed"])
+        ).all()
+
+        counts = {"pending": 0, "rejected": 0, "error": 0, "no_changes_needed": 0}
+
+        for review in stale_reviews:
+            status = review.approval_status or "pending"
+            counts[status] = counts.get(status, 0) + 1
+            self.db.delete(review)
+
+        self.db.commit()
+
+        return {
+            "total_deleted": sum(counts.values()),
+            "by_status": counts,
+            "cutoff_date": cutoff_date.isoformat()
+        }
+
+    @staticmethod
+    def calculate_review_status(adjustments: List[Dict[str, Any]]) -> str:
+        """
+        Calculate overall review status based on individual modification statuses.
+
+        Args:
+            adjustments: List of modification dictionaries
+
+        Returns:
+            Review status: 'pending', 'approved', 'rejected', or 'no_changes_needed'
+        """
+        if not adjustments:
+            return "no_changes_needed"
+
+        statuses = [adj.get("status", "pending") for adj in adjustments]
+
+        # If all are actioned (approved or rejected)
+        if all(s in ("approved", "rejected") for s in statuses):
+            # If any were approved, mark review as approved
+            if any(s == "approved" for s in statuses):
+                return "approved"
+            else:
+                return "rejected"
+        # If any are still pending, review is pending
+        elif any(s == "pending" for s in statuses):
+            return "pending"
+        else:
+            return "pending"  # Default fallback
+
+    def action_single_modification(
+        self,
+        review_id: int,
+        mod_index: int,
+        action: str
+    ) -> Dict[str, Any]:
+        """
+        Approve or reject a single modification within a review.
+
+        Args:
+            review_id: ID of the DailyReview
+            mod_index: Index of the modification in the adjustments list
+            action: 'approve' or 'reject'
+
+        Returns:
+            Result of the action including any Garmin sync results
+        """
+        from datetime import datetime
+
+        # Get the review
+        review = self.db.query(DailyReview).filter(
+            DailyReview.id == review_id,
+            DailyReview.athlete_id == self.athlete_id
+        ).first()
+
+        if not review:
+            raise ValueError("Review not found")
+
+        # Parse adjustments
+        adjustments = json.loads(review.proposed_adjustments) if review.proposed_adjustments else []
+
+        if not adjustments:
+            raise ValueError("No modifications in this review")
+
+        if mod_index < 0 or mod_index >= len(adjustments):
+            raise ValueError(f"Invalid modification index: {mod_index}")
+
+        mod = adjustments[mod_index]
+
+        # Check if already actioned
+        current_status = mod.get("status", "pending")
+        if current_status != "pending":
+            raise ValueError(f"Modification already {current_status}")
+
+        result = {
+            "status": "success",
+            "review_id": review_id,
+            "modification_index": mod_index,
+            "action": action,
+            "garmin_sync": None
+        }
+
+        # Update the modification status
+        mod["status"] = action + "d"  # 'approved' or 'rejected'
+        mod["actioned_at"] = datetime.utcnow().isoformat()
+
+        if action == "approve":
+            # Apply this single modification
+            try:
+                garmin_results = self.apply_approved_modifications([mod], sync_to_garmin=True)
+                result["garmin_sync"] = garmin_results
+
+                # Create PlanAdjustment record for audit trail
+                plan_adj = PlanAdjustment(
+                    plan_id=1,  # Default plan
+                    review_id=review.id,
+                    adjustment_date=date.today(),
+                    adjustment_type=mod.get("type", "unknown"),
+                    reasoning=mod.get("reason", ""),
+                    changes=json.dumps(mod)
+                )
+                self.db.add(plan_adj)
+            except Exception as e:
+                result["garmin_sync"] = {"error": str(e)}
+
+        # Update the review with modified adjustments
+        review.proposed_adjustments = json.dumps(adjustments)
+
+        # Recalculate overall review status
+        new_review_status = self.calculate_review_status(adjustments)
+        review.approval_status = new_review_status
+
+        # If all modifications have been actioned, mark the timestamp
+        if new_review_status in ("approved", "rejected"):
+            review.approved_at = datetime.utcnow()
+
+        self.db.commit()
+
+        result["new_review_status"] = new_review_status
+        return result
