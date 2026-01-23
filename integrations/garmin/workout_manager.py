@@ -619,6 +619,44 @@ class GarminWorkoutManager:
             traceback.print_exc()
             return None
 
+    @staticmethod
+    def estimate_exercise_duration(sets_str: str) -> Optional[float]:
+        """
+        Estimate the duration of a strength exercise based on sets/reps.
+
+        Assumptions:
+        - Each rep takes ~3 seconds
+        - Rest between sets is ~75 seconds
+        - For ranges like "8-10", use the average
+
+        Args:
+            sets_str: Sets string like "3×8-10" or "2×10"
+
+        Returns:
+            Estimated duration in seconds, or None if cannot parse
+        """
+        if not sets_str:
+            return None
+
+        # Match patterns like "3×8-10", "2x10", "4×12"
+        match = re.match(r'(\d+)[×x](\d+)(?:-(\d+))?', sets_str, re.IGNORECASE)
+        if match:
+            num_sets = int(match.group(1))
+            reps_low = int(match.group(2))
+            reps_high = int(match.group(3)) if match.group(3) else reps_low
+            avg_reps = (reps_low + reps_high) / 2
+
+            # Calculate time
+            seconds_per_rep = 3
+            rest_between_sets = 75  # seconds
+
+            work_time = num_sets * avg_reps * seconds_per_rep
+            rest_time = (num_sets - 1) * rest_between_sets  # no rest after last set
+
+            return work_time + rest_time
+
+        return None
+
     def _create_strength_step(
         self,
         exercise_name: str,
@@ -660,18 +698,26 @@ class GarminWorkoutManager:
             desc_parts.append(f"- {notes}")
         description = " ".join(desc_parts)
 
-        # Determine end condition
+        # Determine end condition - prefer time-based over lap button
+        end_condition = None
+        end_condition_value = None
+
         if duration:
-            # Parse duration to seconds
+            # Parse explicit duration
             duration_secs = self.parse_duration_string(duration)
             if duration_secs:
                 end_condition = self.CONDITION_TYPE_MAP["time"]
                 end_condition_value = duration_secs
-            else:
-                end_condition = self.CONDITION_TYPE_MAP["lap.button"]
-                end_condition_value = None
-        else:
-            # Use lap button for exercises without duration
+
+        if end_condition is None and sets:
+            # Estimate duration from sets/reps
+            estimated_secs = self.estimate_exercise_duration(sets)
+            if estimated_secs:
+                end_condition = self.CONDITION_TYPE_MAP["time"]
+                end_condition_value = estimated_secs
+
+        if end_condition is None:
+            # Fallback to lap button only if we have no other option
             end_condition = self.CONDITION_TYPE_MAP["lap.button"]
             end_condition_value = None
 
