@@ -369,6 +369,101 @@ class TrainingPlanManager:
 
         return {"warmup": [], "main": [], "cooldown": []}
 
+    def _get_lift_workout_details(self, workout_type: str) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get detailed workout structure for strength workouts.
+
+        Returns a dictionary with warmup, main, finisher, and cooldown exercise lists
+        in the format expected by GarminWorkoutManager.create_detailed_strength_workout().
+        """
+        if workout_type == "lift_a":
+            return {
+                "warmup": [
+                    {"name": "Foam roll", "duration": "5-8 min", "notes": "Quads, glutes, hip flexors"},
+                    {"name": "Dynamic stretches", "notes": "Leg swings, walking lunges, hip circles"},
+                    {"name": "Bodyweight squats", "sets": "2×10"}
+                ],
+                "main": [
+                    {"name": "Squats or Goblet Squats", "sets": "3×8-10", "notes": "Moderate weight"},
+                    {"name": "Romanian Deadlifts", "sets": "3×10-12"},
+                    {"name": "Bulgarian Split Squats", "sets": "2×8", "notes": "Each leg"},
+                    {"name": "Box Jumps or Broad Jumps", "sets": "3×5", "notes": "Power focus, full recovery"},
+                    {"name": "Single-Leg Balance", "sets": "2×30s", "notes": "Each leg, unstable surface"}
+                ],
+                "finisher": [
+                    {"name": "Farmers Carry", "sets": "2×40 yards"}
+                ],
+                "cooldown": [
+                    {"name": "Hip flexor stretch", "duration": "2 min each side"},
+                    {"name": "Pigeon pose", "duration": "2 min each side"}
+                ]
+            }
+
+        elif workout_type == "lift_b":
+            return {
+                "warmup": [
+                    {"name": "Arm circles, band pull-aparts, cat-cow", "duration": "5-8 min"},
+                    {"name": "Push-ups", "sets": "2×10"}
+                ],
+                "main": [
+                    {"name": "Bench Press or Push-ups", "sets": "3×8-10"},
+                    {"name": "Bent-Over Rows", "sets": "3×10-12"},
+                    {"name": "Overhead Press", "sets": "3×8-10"},
+                    {"name": "Pull-ups or Lat Pulldowns", "sets": "3×8-10"},
+                    {"name": "Pallof Press", "sets": "2×12", "notes": "Each side, anti-rotation"},
+                    {"name": "Med Ball Rotational Throws", "sets": "2×8", "notes": "Each side"}
+                ],
+                "finisher": [
+                    {"name": "Suitcase Carry", "sets": "2×40 yards", "notes": "Each hand"}
+                ],
+                "cooldown": [
+                    {"name": "Thoracic spine rotation"},
+                    {"name": "Doorway chest stretch"}
+                ]
+            }
+
+        return {"warmup": [], "main": [], "finisher": [], "cooldown": []}
+
+    def _get_vo2_workout_details(self, week_number: int) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get detailed workout structure for VO2 max workouts.
+
+        Returns a dictionary with warmup, main, and cooldown exercise lists
+        in the format expected by GarminWorkoutManager.create_detailed_vo2_workout().
+        """
+        # VO2 main sets by week
+        vo2_main_sets = {
+            (1, 4): "6×2 min @ hard (RPE 8), 2 min easy between",
+            (5, 8): "5×3 min @ hard, 2 min easy between",
+            (9, 12): "4×4 min @ hard, 2.5 min easy between",
+            (13, 16): "5×3 min @ hard, 90s easy between",
+            (17, 20): "6×2 min @ very hard (RPE 9), 2 min easy between",
+            (21, 23): "4×3 min @ hard, 2 min easy between",
+            (24, 24): "Light 20 min easy (taper)",
+        }
+
+        def get_main_set(sets_dict, week):
+            for (start, end), main_set in sets_dict.items():
+                if start <= week <= end:
+                    return main_set
+            return "4×3 min @ hard, 2 min easy between"
+
+        main_set = get_main_set(vo2_main_sets, week_number)
+
+        return {
+            "warmup": [
+                {"name": "Easy jog/row/spin", "duration": "8-10 min"},
+                {"name": "Dynamic stretches"},
+                {"name": "Strides or pickups", "sets": "3-4×15-20s"}
+            ],
+            "main": [
+                {"name": "Intervals", "description": main_set}
+            ],
+            "cooldown": [
+                {"name": "Easy + stretching", "duration": "5 min"}
+            ]
+        }
+
     def _create_garmin_workout(self, scheduled: ScheduledWorkout) -> Optional["GarminWorkout"]:
         """
         Convert a scheduled workout to Garmin format.
@@ -404,47 +499,39 @@ class TrainingPlanManager:
             )
 
         elif scheduled.workout_type in ["lift_a", "lift_b"]:
-            exercises = []
-            for phase in workout_data.get("phases", []):
-                if "main" in phase.get("name", "").lower():
-                    for ex in phase.get("exercises", []):
-                        exercises.append({
-                            "name": ex.get("name", "Exercise"),
-                            "sets": ex.get("sets", 3),
-                            "reps": ex.get("reps", "8-10"),
-                            "notes": ex.get("notes", "")
-                        })
+            # Get detailed workout structure for strength workouts
+            workout_details = self._get_lift_workout_details(scheduled.workout_type)
 
-            workout_type = "lower" if scheduled.workout_type == "lift_a" else "upper"
-            return self.garmin_manager.create_strength_workout(
-                name=scheduled.workout_name or f"Lift Week {scheduled.week_number}",
+            # Apply intensity modifier if present
+            intensity_modifier = workout_data.get("intensity_modifier")
+            workout_name = scheduled.workout_name or f"Lift Week {scheduled.week_number}"
+            if intensity_modifier:
+                pct = int(intensity_modifier * 100)
+                workout_name += f" ({pct}%)"
+
+            # Return detailed workout JSON (dict) for direct upload
+            return self.garmin_manager.create_detailed_strength_workout(
+                name=workout_name,
                 week_number=scheduled.week_number,
-                workout_type=workout_type,
-                exercises=exercises
+                workout_details=workout_details
             )
 
         elif scheduled.workout_type == "vo2":
-            # Parse VO2 workout parameters
-            main_set = {}
-            for phase in workout_data.get("phases", []):
-                if "main" in phase.get("name", "").lower():
-                    exercises = phase.get("exercises", [])
-                    if exercises:
-                        ex = exercises[0]
-                        main_set = {
-                            "intervals": ex.get("sets", 6),
-                            "duration": ex.get("reps", "2 min").replace(" min", ""),
-                            "intensity": ex.get("intensity", "hard")
-                        }
-                    break
+            # Get detailed workout structure for VO2 workouts
+            workout_details = self._get_vo2_workout_details(scheduled.week_number)
 
-            return self.garmin_manager.create_vo2_workout(
-                name=scheduled.workout_name or f"VO2 Week {scheduled.week_number}",
+            # Apply intensity modifier if present
+            intensity_modifier = workout_data.get("intensity_modifier")
+            workout_name = scheduled.workout_name or f"VO2 Week {scheduled.week_number}"
+            if intensity_modifier:
+                pct = int(intensity_modifier * 100)
+                workout_name += f" ({pct}%)"
+
+            # Return detailed workout JSON (dict) for direct upload
+            return self.garmin_manager.create_detailed_vo2_workout(
+                name=workout_name,
                 week_number=scheduled.week_number,
-                intervals=int(main_set.get("intervals", 6)),
-                interval_duration_minutes=float(main_set.get("duration", 2)),
-                rest_duration_minutes=2.0,
-                intensity=main_set.get("intensity", "hard (RPE 8)")
+                workout_details=workout_details
             )
 
         return None
