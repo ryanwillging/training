@@ -2892,13 +2892,19 @@ class handler(BaseHTTPRequestHandler):
                 adj["status"] = action + "d"  # 'approved' or 'rejected'
                 adj["actioned_at"] = action_time
 
+        # Create manager for plan operations
+        manager = TrainingPlanManager(db, athlete.id)
+
         if action == "approve":
             review.approval_notes = notes
+
+            # Ensure a training plan exists for the PlanAdjustment foreign key
+            plan_id = manager._ensure_training_plan_exists()
 
             # Create PlanAdjustment records for tracking (only for pending mods)
             for adj in pending_mods:
                 plan_adj = PlanAdjustment(
-                    plan_id=1,
+                    plan_id=plan_id,
                     review_id=review.id,
                     adjustment_date=get_eastern_today(),
                     adjustment_type=adj.get("type", "unknown"),
@@ -2909,7 +2915,6 @@ class handler(BaseHTTPRequestHandler):
 
             # Apply modifications to ScheduledWorkouts and sync to Garmin
             try:
-                manager = TrainingPlanManager(db, athlete.id)
                 garmin_results = manager.apply_approved_modifications(
                     pending_mods,
                     sync_to_garmin=True
@@ -2998,8 +3003,9 @@ class handler(BaseHTTPRequestHandler):
                 result["garmin_sync"] = garmin_results
 
                 # Create PlanAdjustment record for audit trail
+                plan_id = manager._ensure_training_plan_exists()
                 plan_adj = PlanAdjustment(
-                    plan_id=1,
+                    plan_id=plan_id,
                     review_id=review.id,
                     adjustment_date=get_eastern_today(),
                     adjustment_type=mod.get("type", "unknown"),
