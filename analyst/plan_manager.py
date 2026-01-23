@@ -972,17 +972,20 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
             adjustments: List of modification dictionaries
 
         Returns:
-            Review status: 'pending', 'approved', 'rejected', or 'no_changes_needed'
+            Review status: 'pending', 'approved', 'updated', 'rejected', or 'no_changes_needed'
         """
         if not adjustments:
             return "no_changes_needed"
 
         statuses = [adj.get("status", "pending") for adj in adjustments]
 
-        # If all are actioned (approved or rejected)
-        if all(s in ("approved", "rejected") for s in statuses):
-            # If any were approved, mark review as approved
-            if any(s == "approved" for s in statuses):
+        # If all are actioned (approved, updated, or rejected)
+        if all(s in ("approved", "updated", "rejected") for s in statuses):
+            # If any were updated (Garmin synced), mark review as updated
+            if any(s == "updated" for s in statuses):
+                return "updated"
+            # If any were approved (not synced), mark review as approved
+            elif any(s == "approved" for s in statuses):
                 return "approved"
             else:
                 return "rejected"

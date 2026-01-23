@@ -2001,10 +2001,16 @@ class handler(BaseHTTPRequestHandler):
                     # Status badge colors
                     mod_status_styles = {
                         "pending": {"bg": "#fff3e0", "text": "#e65100", "label": "Pending"},
-                        "approved": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Approved"},
+                        "approved": {"bg": "#e3f2fd", "text": "#1565c0", "label": "Approved"},
+                        "updated": {"bg": "#e8f5e9", "text": "#2e7d32", "label": "Updated"},
                         "rejected": {"bg": "#ffebee", "text": "#c62828", "label": "Rejected"}
                     }
                     s_style = mod_status_styles.get(mod_status, mod_status_styles["pending"])
+
+                    # Add reminder for approved but not synced
+                    needs_action_html = ""
+                    if mod_status == "approved":
+                        needs_action_html = '<div class="mod-needs-action">⚠️ Needs local sync to update Garmin</div>'
 
                     # Individual action buttons (only for pending modifications)
                     mod_actions_html = ""
@@ -2017,7 +2023,7 @@ class handler(BaseHTTPRequestHandler):
                         '''
 
                     mods_html += f'''
-                    <div class="modification-item {'mod-actioned' if mod_status != 'pending' else ''}">
+                    <div class="modification-item {'mod-actioned' if mod_status != 'pending' else ''}" data-review-id="{review.id}" data-mod-index="{idx}">
                         <div class="mod-header">
                             <span class="mod-type">{adj_type.replace("_", " ").title()}</span>
                             <span class="mod-priority" style="background: {p_style["bg"]}; color: {p_style["text"]};">{adj_priority.upper()}</span>
@@ -2028,6 +2034,7 @@ class handler(BaseHTTPRequestHandler):
                             <div class="mod-details">
                                 <div class="mod-description">{adj_desc}</div>
                                 {f'<div class="mod-reason">{adj_reason}</div>' if adj_reason else ''}
+                                {needs_action_html}
                             </div>
                             {mod_actions_html}
                         </div>
@@ -2231,6 +2238,11 @@ class handler(BaseHTTPRequestHandler):
         }}
 
         async function actionModification(reviewId, modIndex, action) {{
+            // Find the modification item element
+            const modItem = document.querySelector(`[data-review-id="${{reviewId}}"][data-mod-index="${{modIndex}}"]`);
+            const statusBadge = modItem?.querySelector('.mod-status');
+            const actionsDiv = modItem?.querySelector('.mod-actions');
+
             try {{
                 const response = await fetch(`/api/plan/reviews/${{reviewId}}/modifications/${{modIndex}}/action`, {{
                     method: 'POST',
@@ -2238,14 +2250,79 @@ class handler(BaseHTTPRequestHandler):
                     body: JSON.stringify({{ action }})
                 }});
 
+                const data = await response.json();
+
                 if (response.ok) {{
-                    location.reload();
+                    // Update the UI without reloading
+                    if (modItem) {{
+                        modItem.classList.add('mod-actioned');
+
+                        // Update status badge
+                        if (statusBadge) {{
+                            if (action === 'approve') {{
+                                // Check if Garmin sync was successful
+                                const garminSync = data.garmin_sync || {{}};
+                                const hasApplied = garminSync.applied && garminSync.applied.length > 0;
+                                const hasErrors = garminSync.garmin_failed && garminSync.garmin_failed.length > 0;
+                                const isUpdated = hasApplied && !hasErrors;
+
+                                if (isUpdated) {{
+                                    statusBadge.style.background = '#e8f5e9';
+                                    statusBadge.style.color = '#2e7d32';
+                                    statusBadge.textContent = 'Updated';
+                                }} else {{
+                                    statusBadge.style.background = '#e3f2fd';
+                                    statusBadge.style.color = '#1565c0';
+                                    statusBadge.textContent = 'Approved';
+
+                                    // Add needs action message
+                                    const detailsDiv = modItem.querySelector('.mod-details');
+                                    if (detailsDiv && !detailsDiv.querySelector('.mod-needs-action')) {{
+                                        const needsAction = document.createElement('div');
+                                        needsAction.className = 'mod-needs-action';
+                                        needsAction.textContent = '⚠️ Needs local sync to update Garmin';
+                                        detailsDiv.appendChild(needsAction);
+                                    }}
+                                }}
+                            }} else {{
+                                statusBadge.style.background = '#ffebee';
+                                statusBadge.style.color = '#c62828';
+                                statusBadge.textContent = 'Rejected';
+                            }}
+                        }}
+
+                        // Remove action buttons
+                        if (actionsDiv) {{
+                            actionsDiv.remove();
+                        }}
+
+                        // Update pending count in header
+                        updatePendingCount();
+                    }}
                 }} else {{
-                    const data = await response.json();
                     alert('Error: ' + (data.detail || data.error || 'Failed'));
                 }}
             }} catch (e) {{
                 alert('Error: ' + e.message);
+            }}
+        }}
+
+        function updatePendingCount() {{
+            // Count remaining pending items
+            const pendingItems = document.querySelectorAll('.modification-item:not(.mod-actioned)').length;
+            const pendingAlert = document.querySelector('.pending-alert');
+            const approveAllBtns = document.querySelectorAll('.approve-btn');
+
+            if (pendingItems === 0) {{
+                // Hide pending alert and approve all buttons
+                if (pendingAlert) pendingAlert.style.display = 'none';
+                approveAllBtns.forEach(btn => btn.closest('.review-actions')?.remove());
+            }} else {{
+                // Update the count text
+                const alertContent = pendingAlert?.querySelector('.alert-content strong');
+                if (alertContent) {{
+                    alertContent.textContent = `${{pendingItems}} modification${{pendingItems > 1 ? 's' : ''}} pending approval`;
+                }}
             }}
         }}
 
@@ -2476,6 +2553,14 @@ class handler(BaseHTTPRequestHandler):
             .mod-details {{ flex: 1; }}
             .mod-description {{ color: var(--md-on-surface); margin-bottom: 6px; }}
             .mod-reason {{ font-size: 13px; color: var(--md-on-surface-variant); font-style: italic; }}
+            .mod-needs-action {{
+                font-size: 12px;
+                color: #1565c0;
+                background: #e3f2fd;
+                padding: 6px 10px;
+                border-radius: 4px;
+                margin-top: 8px;
+            }}
             .mod-actions {{
                 display: flex;
                 gap: 8px;
@@ -2886,12 +2971,6 @@ class handler(BaseHTTPRequestHandler):
         garmin_results = None
         action_time = datetime.utcnow().isoformat()
 
-        # Update status of all pending modifications
-        for adj in adjustments:
-            if adj.get("status", "pending") == "pending":
-                adj["status"] = action + "d"  # 'approved' or 'rejected'
-                adj["actioned_at"] = action_time
-
         # Create manager for plan operations
         manager = TrainingPlanManager(db, athlete.id)
 
@@ -2914,19 +2993,38 @@ class handler(BaseHTTPRequestHandler):
                 db.add(plan_adj)
 
             # Apply modifications to ScheduledWorkouts and sync to Garmin
+            garmin_success = False
             try:
                 garmin_results = manager.apply_approved_modifications(
                     pending_mods,
                     sync_to_garmin=True
                 )
                 review.adjustments_applied = True
+
+                # Check if Garmin sync was successful
+                if garmin_results:
+                    has_errors = bool(garmin_results.get("garmin_failed"))
+                    has_applied = bool(garmin_results.get("applied"))
+                    garmin_success = has_applied and not has_errors
             except Exception as e:
                 # Still mark as approved even if Garmin sync fails
                 review.adjustments_applied = True
                 garmin_results = {"error": str(e)}
 
+            # Update status of pending modifications based on result
+            new_status = "updated" if garmin_success else "approved"
+            for adj in adjustments:
+                if adj.get("status", "pending") == "pending":
+                    adj["status"] = new_status
+                    adj["actioned_at"] = action_time
+
         elif action == "reject":
             review.approval_notes = notes
+            # Update status for rejected modifications
+            for adj in adjustments:
+                if adj.get("status", "pending") == "pending":
+                    adj["status"] = "rejected"
+                    adj["actioned_at"] = action_time
 
         # Update the review with modified adjustments
         review.proposed_adjustments = json.dumps(adjustments)
@@ -2992,15 +3090,21 @@ class handler(BaseHTTPRequestHandler):
         }
 
         # Update the modification status
-        mod["status"] = action + "d"  # 'approved' or 'rejected'
         mod["actioned_at"] = datetime.utcnow().isoformat()
 
         if action == "approve":
             # Apply this single modification
+            garmin_success = False
             try:
                 manager = TrainingPlanManager(db, athlete.id)
                 garmin_results = manager.apply_approved_modifications([mod], sync_to_garmin=True)
                 result["garmin_sync"] = garmin_results
+
+                # Check if Garmin sync was successful (no errors and something was synced or applied)
+                if garmin_results:
+                    has_errors = bool(garmin_results.get("garmin_failed"))
+                    has_applied = bool(garmin_results.get("applied"))
+                    garmin_success = has_applied and not has_errors
 
                 # Create PlanAdjustment record for audit trail
                 plan_id = manager._ensure_training_plan_exists()
@@ -3015,6 +3119,11 @@ class handler(BaseHTTPRequestHandler):
                 db.add(plan_adj)
             except Exception as e:
                 result["garmin_sync"] = {"error": str(e)}
+
+            # Set status based on Garmin sync result
+            mod["status"] = "updated" if garmin_success else "approved"
+        else:
+            mod["status"] = "rejected"
 
         # Update the review with modified adjustments
         review.proposed_adjustments = json.dumps(adjustments)
