@@ -1,6 +1,9 @@
 """
 Garmin Connect workout manager.
 Creates and schedules workouts on Garmin Connect calendar.
+
+API format discovered by inspecting actual Garmin workouts - the official
+garminconnect library doesn't fully support workout creation.
 """
 
 import json
@@ -9,6 +12,14 @@ from datetime import date, datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
+
+# Try to import garth for direct API access
+try:
+    import garth
+    GARTH_AVAILABLE = True
+except ImportError:
+    GARTH_AVAILABLE = False
+    garth = None
 
 from integrations.garmin.client import GarminClient
 
@@ -38,8 +49,8 @@ class WorkoutSportType(Enum):
 class WorkoutStep:
     """A single step in a Garmin workout."""
     type: WorkoutStepType
-    duration_type: str  # "time", "distance", "lap_button", "open"
-    duration_value: Optional[float] = None  # seconds or meters
+    duration_type: str  # "time", "distance", "lap.button", "open"
+    duration_value: Optional[float] = None  # seconds or yards/meters
     target_type: Optional[str] = None  # "heart_rate", "pace", "power", "cadence", "open"
     target_value_low: Optional[float] = None
     target_value_high: Optional[float] = None
@@ -65,7 +76,43 @@ class GarminWorkout:
 class GarminWorkoutManager:
     """
     Manages workout creation and scheduling on Garmin Connect.
+
+    Uses garth library for direct API access since garminconnect doesn't
+    fully support workout creation/scheduling.
     """
+
+    # Correct Garmin sport type mappings (discovered from actual API responses)
+    SPORT_TYPE_MAP = {
+        WorkoutSportType.RUNNING: {"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},
+        WorkoutSportType.CYCLING: {"sportTypeId": 2, "sportTypeKey": "cycling", "displayOrder": 2},
+        WorkoutSportType.SWIMMING: {"sportTypeId": 4, "sportTypeKey": "swimming", "displayOrder": 3},
+        WorkoutSportType.STRENGTH: {"sportTypeId": 5, "sportTypeKey": "strength_training", "displayOrder": 5},
+        WorkoutSportType.CARDIO: {"sportTypeId": 1, "sportTypeKey": "running", "displayOrder": 1},  # VO2 uses running
+        WorkoutSportType.OTHER: {"sportTypeId": 0, "sportTypeKey": "other", "displayOrder": 0},
+    }
+
+    # Step type mappings
+    STEP_TYPE_MAP = {
+        WorkoutStepType.WARMUP: {"stepTypeId": 1, "stepTypeKey": "warmup", "displayOrder": 1},
+        WorkoutStepType.COOLDOWN: {"stepTypeId": 2, "stepTypeKey": "cooldown", "displayOrder": 2},
+        WorkoutStepType.INTERVAL: {"stepTypeId": 3, "stepTypeKey": "interval", "displayOrder": 3},
+        WorkoutStepType.RECOVERY: {"stepTypeId": 4, "stepTypeKey": "recovery", "displayOrder": 4},
+        WorkoutStepType.REST: {"stepTypeId": 5, "stepTypeKey": "rest", "displayOrder": 5},
+        WorkoutStepType.REPEAT: {"stepTypeId": 6, "stepTypeKey": "repeat", "displayOrder": 6},
+        WorkoutStepType.OTHER: {"stepTypeId": 7, "stepTypeKey": "other", "displayOrder": 7},
+    }
+
+    # End condition mappings
+    CONDITION_TYPE_MAP = {
+        "time": {"conditionTypeId": 2, "conditionTypeKey": "time", "displayOrder": 2, "displayable": True},
+        "distance": {"conditionTypeId": 3, "conditionTypeKey": "distance", "displayOrder": 3, "displayable": True},
+        "lap.button": {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
+        "lap_button": {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
+        "open": {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
+    }
+
+    # Pool length unit for swimming (25 yards)
+    POOL_LENGTH_UNIT = {"unitId": 230, "unitKey": "yard", "factor": 91.44}
 
     def __init__(self, client: Optional[GarminClient] = None):
         """
@@ -76,12 +123,26 @@ class GarminWorkoutManager:
         """
         self.client = client or GarminClient()
         self._authenticated = False
+        self._garth_initialized = False
 
     def _ensure_authenticated(self):
         """Ensure we're authenticated with Garmin Connect."""
         if not self._authenticated:
             self.client.authenticate()
             self._authenticated = True
+
+    def _ensure_garth(self):
+        """Ensure garth is available and authenticated."""
+        if not GARTH_AVAILABLE:
+            raise RuntimeError("garth library not available - install with: pip install garth")
+
+        if not self._garth_initialized:
+            # Try to resume from saved tokens
+            try:
+                garth.resume("~/.garth")
+                self._garth_initialized = True
+            except Exception:
+                raise RuntimeError("garth not authenticated - run garth.login() first")
 
     def create_swim_workout(
         self,
@@ -126,10 +187,10 @@ class GarminWorkoutManager:
                 description="400y Time Trial - Push start. Controlled first 100, build through 200-300, hold form."
             ))
         else:
-            # Regular main set
+            # Regular main set - use lap button for open-ended
             steps.append(WorkoutStep(
                 type=WorkoutStepType.INTERVAL,
-                duration_type="open",
+                duration_type="lap.button",
                 target_type="open",
                 description=f"Main Set: {main_set_description}"
             ))
@@ -173,7 +234,7 @@ class GarminWorkoutManager:
         steps.append(WorkoutStep(
             type=WorkoutStepType.WARMUP,
             duration_type="time",
-            duration_value=420,  # 7 minutes
+            duration_value=300,  # 5 minutes
             target_type="open",
             description="Dynamic warmup - foam roll, stretches, activation"
         ))
@@ -188,7 +249,7 @@ class GarminWorkoutManager:
 
             steps.append(WorkoutStep(
                 type=WorkoutStepType.INTERVAL,
-                duration_type="lap_button",
+                duration_type="lap.button",
                 target_type="open",
                 description=desc
             ))
@@ -238,9 +299,9 @@ class GarminWorkoutManager:
         steps.append(WorkoutStep(
             type=WorkoutStepType.WARMUP,
             duration_type="time",
-            duration_value=540,  # 9 minutes
+            duration_value=480,  # 8 minutes
             target_type="open",
-            description="Easy warmup + dynamic stretches + strides"
+            description="Easy warmup + dynamic stretches"
         ))
 
         # Intervals as a repeat block
@@ -263,7 +324,7 @@ class GarminWorkoutManager:
 
         steps.append(WorkoutStep(
             type=WorkoutStepType.REPEAT,
-            duration_type="lap_button",
+            duration_type="lap.button",
             repeat_count=intervals,
             child_steps=interval_steps,
             description=f"{intervals}x{interval_duration_minutes}min @ {intensity}, {rest_duration_minutes}min rest"
@@ -286,103 +347,141 @@ class GarminWorkoutManager:
             estimated_duration_minutes=40
         )
 
+    def _step_to_garmin_format(
+        self,
+        step: WorkoutStep,
+        order: int,
+        is_swim: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Convert a WorkoutStep to Garmin's step format.
+
+        Args:
+            step: WorkoutStep to convert
+            order: Step order number
+            is_swim: Whether this is a swimming workout (affects stroke type)
+        """
+        step_type_info = self.STEP_TYPE_MAP.get(step.type, self.STEP_TYPE_MAP[WorkoutStepType.OTHER])
+
+        # Normalize duration_type
+        duration_type = step.duration_type
+        if duration_type == "lap_button":
+            duration_type = "lap.button"
+
+        condition_info = self.CONDITION_TYPE_MAP.get(
+            duration_type,
+            self.CONDITION_TYPE_MAP["lap.button"]
+        )
+
+        # Build the step
+        garmin_step = {
+            "type": "ExecutableStepDTO",
+            "stepOrder": order,
+            "stepType": step_type_info,
+            "childStepId": None,
+            "description": step.description or "",
+            "endCondition": condition_info,
+            "endConditionValue": float(step.duration_value) if step.duration_value else None,
+            "preferredEndConditionUnit": None,
+            "endConditionCompare": None,
+            "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1},
+            "targetValueOne": None,
+            "targetValueTwo": None,
+            "targetValueUnit": None,
+            "zoneNumber": None,
+            "secondaryTargetType": None,
+            "secondaryTargetValueOne": None,
+            "secondaryTargetValueTwo": None,
+            "secondaryTargetValueUnit": None,
+            "secondaryZoneNumber": None,
+            "endConditionZone": None,
+            "strokeType": {"strokeTypeId": 6 if is_swim else 0, "strokeTypeKey": "free" if is_swim else None, "displayOrder": 6 if is_swim else 0},
+            "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None, "displayOrder": 0},
+            "category": None,
+            "exerciseName": None,
+            "workoutProvider": None,
+            "providerExerciseSourceId": None,
+            "weightValue": None,
+            "weightUnit": None
+        }
+
+        # Add preferred unit for swim distance steps
+        if is_swim and duration_type == "distance":
+            garmin_step["preferredEndConditionUnit"] = self.POOL_LENGTH_UNIT
+
+        # Handle target types (heart rate, pace, etc.)
+        if step.target_type and step.target_type not in ("open", None):
+            target_map = {
+                "heart_rate": {"workoutTargetTypeId": 4, "workoutTargetTypeKey": "heart.rate.zone"},
+                "pace": {"workoutTargetTypeId": 2, "workoutTargetTypeKey": "pace.zone"},
+                "power": {"workoutTargetTypeId": 3, "workoutTargetTypeKey": "power.zone"},
+                "cadence": {"workoutTargetTypeId": 5, "workoutTargetTypeKey": "cadence"},
+            }
+            if step.target_type in target_map:
+                garmin_step["targetType"] = target_map[step.target_type]
+                garmin_step["targetValueOne"] = step.target_value_low
+                garmin_step["targetValueTwo"] = step.target_value_high
+
+        return garmin_step
+
     def workout_to_garmin_format(self, workout: GarminWorkout) -> Dict[str, Any]:
         """
         Convert a GarminWorkout to the format expected by Garmin Connect API.
 
         This creates the JSON structure needed for the workout creation API.
         """
-        # Map our sport types to Garmin's sport type IDs
-        sport_type_map = {
-            WorkoutSportType.RUNNING: {"sportTypeId": 1, "sportTypeKey": "running"},
-            WorkoutSportType.CYCLING: {"sportTypeId": 2, "sportTypeKey": "cycling"},
-            WorkoutSportType.SWIMMING: {"sportTypeId": 5, "sportTypeKey": "lap_swimming"},
-            WorkoutSportType.STRENGTH: {"sportTypeId": 13, "sportTypeKey": "strength_training"},
-            WorkoutSportType.CARDIO: {"sportTypeId": 29, "sportTypeKey": "cardio_training"},
-            WorkoutSportType.OTHER: {"sportTypeId": 0, "sportTypeKey": "other"},
-        }
-
-        sport_info = sport_type_map.get(workout.sport_type, sport_type_map[WorkoutSportType.OTHER])
+        sport_info = self.SPORT_TYPE_MAP.get(
+            workout.sport_type,
+            self.SPORT_TYPE_MAP[WorkoutSportType.OTHER]
+        )
+        is_swim = workout.sport_type == WorkoutSportType.SWIMMING
 
         # Build workout steps in Garmin format
         garmin_steps = []
         step_order = 1
 
         for step in workout.steps:
-            garmin_step = self._step_to_garmin_format(step, step_order)
+            garmin_step = self._step_to_garmin_format(step, step_order, is_swim=is_swim)
             garmin_steps.append(garmin_step)
             step_order += 1
+
+            # Handle child steps (for repeat blocks)
             if step.child_steps:
                 for child in step.child_steps:
-                    garmin_steps.append(self._step_to_garmin_format(child, step_order))
+                    garmin_steps.append(self._step_to_garmin_format(child, step_order, is_swim=is_swim))
                     step_order += 1
 
-        return {
+        workout_json = {
             "workoutName": workout.name,
-            "description": workout.description or "",
+            "description": workout.description if workout.description else None,
             "sportType": sport_info,
+            "subSportType": None,
             "workoutSegments": [
                 {
                     "segmentOrder": 1,
                     "sportType": sport_info,
+                    "poolLengthUnit": None,
+                    "poolLength": None,
+                    "avgTrainingSpeed": None,
+                    "estimatedDurationInSecs": None,
+                    "estimatedDistanceInMeters": None,
+                    "estimatedDistanceUnit": None,
+                    "estimateType": None,
+                    "description": None,
                     "workoutSteps": garmin_steps
                 }
             ],
             "estimatedDurationInSecs": (workout.estimated_duration_minutes or 45) * 60,
-            "avgTrainingSpeed": None,
-            "poolLength": 22.86 if workout.sport_type == WorkoutSportType.SWIMMING else None,  # 25 yards in meters
-            "poolLengthUnit": {"unitKey": "yard"} if workout.sport_type == WorkoutSportType.SWIMMING else None,
+            "estimatedDistanceInMeters": None,
+            "avgTrainingSpeed": 0.0
         }
 
-    def _step_to_garmin_format(self, step: WorkoutStep, order: int) -> Dict[str, Any]:
-        """Convert a WorkoutStep to Garmin's step format."""
-        # Map step types
-        step_type_map = {
-            WorkoutStepType.WARMUP: {"stepTypeId": 1, "stepTypeKey": "warmup"},
-            WorkoutStepType.COOLDOWN: {"stepTypeId": 2, "stepTypeKey": "cooldown"},
-            WorkoutStepType.INTERVAL: {"stepTypeId": 3, "stepTypeKey": "interval"},
-            WorkoutStepType.RECOVERY: {"stepTypeId": 4, "stepTypeKey": "recovery"},
-            WorkoutStepType.REST: {"stepTypeId": 5, "stepTypeKey": "rest"},
-            WorkoutStepType.REPEAT: {"stepTypeId": 6, "stepTypeKey": "repeat"},
-            WorkoutStepType.OTHER: {"stepTypeId": 7, "stepTypeKey": "other"},
-        }
+        # Add pool settings for swimming workouts
+        if is_swim:
+            workout_json["poolLength"] = 25.0
+            workout_json["poolLengthUnit"] = self.POOL_LENGTH_UNIT
 
-        step_type_info = step_type_map.get(step.type, step_type_map[WorkoutStepType.OTHER])
-
-        # Duration condition
-        duration_condition = {
-            "conditionTypeId": 1 if step.duration_type == "time" else 3 if step.duration_type == "distance" else 7,
-            "conditionTypeKey": step.duration_type
-        }
-
-        garmin_step = {
-            "stepOrder": order,
-            "stepType": step_type_info,
-            "endCondition": duration_condition,
-            "endConditionValue": step.duration_value,
-            "repeatType": None,
-            "repeatValue": step.repeat_count,
-            "description": step.description or "",
-        }
-
-        # Target condition
-        if step.target_type and step.target_type != "open":
-            target_map = {
-                "heart_rate": 4,
-                "pace": 2,
-                "power": 3,
-                "cadence": 5,
-            }
-            garmin_step["targetType"] = {
-                "workoutTargetTypeId": target_map.get(step.target_type, 1),
-                "workoutTargetTypeKey": step.target_type
-            }
-            garmin_step["targetValueLow"] = step.target_value_low
-            garmin_step["targetValueHigh"] = step.target_value_high
-        else:
-            garmin_step["targetType"] = {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target"}
-
-        return garmin_step
+        return workout_json
 
     def upload_workout(self, workout: GarminWorkout) -> Optional[str]:
         """
@@ -394,21 +493,20 @@ class GarminWorkoutManager:
         Returns:
             Workout ID if successful, None otherwise
         """
-        self._ensure_authenticated()
+        self._ensure_garth()
 
         try:
             garmin_format = self.workout_to_garmin_format(workout)
 
-            # Use the garminconnect library's add_workout method if available
-            if hasattr(self.client.client, 'add_workout'):
-                result = self.client.client.add_workout(garmin_format)
-                workout_id = result.get('workoutId')
-                print(f"✓ Uploaded workout '{workout.name}' - ID: {workout_id}")
-                return str(workout_id)
-            else:
-                # Fallback: manual API call
-                print(f"⚠ Workout upload API not available in garminconnect library")
-                return None
+            result = garth.connectapi(
+                "/workout-service/workout",
+                method="POST",
+                json=garmin_format
+            )
+
+            workout_id = str(result.get("workoutId"))
+            print(f"✓ Uploaded workout '{workout.name}' - ID: {workout_id}")
+            return workout_id
 
         except Exception as e:
             print(f"✗ Error uploading workout '{workout.name}': {e}")
@@ -429,19 +527,19 @@ class GarminWorkoutManager:
         Returns:
             True if successful
         """
-        self._ensure_authenticated()
+        self._ensure_garth()
 
         try:
-            # Format date for Garmin API
             date_str = scheduled_date.strftime("%Y-%m-%d")
 
-            if hasattr(self.client.client, 'schedule_workout'):
-                self.client.client.schedule_workout(workout_id, date_str)
-                print(f"✓ Scheduled workout {workout_id} for {date_str}")
-                return True
-            else:
-                print(f"⚠ Workout scheduling API not available")
-                return False
+            garth.connectapi(
+                f"/workout-service/schedule/{workout_id}",
+                method="POST",
+                json={"date": date_str}
+            )
+
+            print(f"✓ Scheduled workout {workout_id} for {date_str}")
+            return True
 
         except Exception as e:
             print(f"✗ Error scheduling workout: {e}")
@@ -468,6 +566,86 @@ class GarminWorkoutManager:
             return workout_id, scheduled
         return None, False
 
+    def get_workouts(self) -> List[Dict[str, Any]]:
+        """
+        Get all workouts from Garmin Connect.
+
+        Returns:
+            List of workout dictionaries
+        """
+        self._ensure_garth()
+
+        try:
+            workouts = garth.connectapi("/workout-service/workouts")
+            return workouts if workouts else []
+        except Exception as e:
+            print(f"✗ Error getting workouts: {e}")
+            return []
+
+    def get_workout(self, workout_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific workout from Garmin Connect.
+
+        Args:
+            workout_id: Garmin workout ID
+
+        Returns:
+            Workout dictionary or None
+        """
+        self._ensure_garth()
+
+        try:
+            return garth.connectapi(f"/workout-service/workout/{workout_id}")
+        except Exception as e:
+            print(f"✗ Error getting workout {workout_id}: {e}")
+            return None
+
+    def delete_workout(self, workout_id: str) -> bool:
+        """
+        Delete a workout from Garmin Connect.
+
+        Args:
+            workout_id: Garmin workout ID to delete
+
+        Returns:
+            True if successful
+        """
+        self._ensure_garth()
+
+        try:
+            garth.connectapi(
+                f"/workout-service/workout/{workout_id}",
+                method="DELETE"
+            )
+            print(f"✓ Deleted workout {workout_id}")
+            return True
+
+        except Exception as e:
+            print(f"✗ Error deleting workout: {e}")
+            return False
+
+    def get_calendar(self, year: int, month: int) -> List[Dict[str, Any]]:
+        """
+        Get calendar items for a specific month.
+
+        Args:
+            year: Year (e.g., 2026)
+            month: Month (1-12, but API uses 0-11)
+
+        Returns:
+            List of calendar items
+        """
+        self._ensure_garth()
+
+        try:
+            # Garmin calendar API uses 0-indexed months
+            api_month = month - 1
+            calendar = garth.connectapi(f"/calendar-service/year/{year}/month/{api_month}")
+            return calendar.get("calendarItems", [])
+        except Exception as e:
+            print(f"✗ Error getting calendar: {e}")
+            return []
+
     def get_scheduled_workouts(
         self,
         start_date: date,
@@ -483,42 +661,22 @@ class GarminWorkoutManager:
         Returns:
             List of scheduled workout dictionaries
         """
-        self._ensure_authenticated()
+        scheduled = []
 
-        try:
-            if hasattr(self.client.client, 'get_workouts'):
-                # Get workouts from Garmin
-                start_str = start_date.strftime("%Y-%m-%d")
-                end_str = end_date.strftime("%Y-%m-%d")
+        # Get calendar items for each month in range
+        current = start_date.replace(day=1)
+        while current <= end_date:
+            items = self.get_calendar(current.year, current.month)
+            for item in items:
+                if item.get("itemType") == "workout":
+                    item_date = item.get("date")
+                    if item_date:
+                        scheduled.append(item)
 
-                # This may need adjustment based on actual API
-                workouts = self.client.client.get_workouts()
-                return workouts if workouts else []
+            # Move to next month
+            if current.month == 12:
+                current = current.replace(year=current.year + 1, month=1)
+            else:
+                current = current.replace(month=current.month + 1)
 
-        except Exception as e:
-            print(f"✗ Error getting scheduled workouts: {e}")
-
-        return []
-
-    def delete_workout(self, workout_id: str) -> bool:
-        """
-        Delete a workout from Garmin Connect.
-
-        Args:
-            workout_id: Garmin workout ID to delete
-
-        Returns:
-            True if successful
-        """
-        self._ensure_authenticated()
-
-        try:
-            if hasattr(self.client.client, 'delete_workout'):
-                self.client.client.delete_workout(workout_id)
-                print(f"✓ Deleted workout {workout_id}")
-                return True
-
-        except Exception as e:
-            print(f"✗ Error deleting workout: {e}")
-
-        return False
+        return scheduled
