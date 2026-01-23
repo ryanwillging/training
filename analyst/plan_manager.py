@@ -14,7 +14,8 @@ from analyst.workout_scheduler import WorkoutScheduler, PlanAdjuster
 from analyst.chatgpt_evaluator import ChatGPTEvaluator, PlanEvaluation, PlanModification, LifestyleInsight
 from database.models import (
     Athlete, DailyWellness, ScheduledWorkout, DailyReview, Goal, GoalProgress,
-    CompletedActivity, WorkoutAnalysis, PlanAdjustment
+    CompletedActivity, WorkoutAnalysis, PlanAdjustment,
+    TrainingPlan as TrainingPlanModel
 )
 
 # Lazy import for Garmin - not available in Vercel serverless
@@ -109,6 +110,43 @@ class TrainingPlanManager:
             if start_str:
                 return date.fromisoformat(start_str)
         return None
+
+    def _ensure_training_plan_exists(self) -> int:
+        """
+        Ensure a TrainingPlan record exists for this athlete and return its ID.
+        Creates a default plan if none exists.
+
+        Returns:
+            The TrainingPlan ID
+        """
+        # Check for existing plan
+        existing = self.db.query(TrainingPlanModel).filter(
+            TrainingPlanModel.athlete_id == self.athlete_id,
+            TrainingPlanModel.status == "active"
+        ).first()
+
+        if existing:
+            return existing.id
+
+        # Create a default training plan
+        start_date = self.get_plan_start_date() or date.today()
+        end_date = start_date + timedelta(weeks=24)
+
+        new_plan = TrainingPlanModel(
+            athlete_id=self.athlete_id,
+            name="24-Week Performance Plan",
+            start_date=start_date,
+            end_date=end_date,
+            status="active",
+            plan_type="athletic-performance",
+            weekly_volume_target_hours=4.0,
+            focus_areas=json.dumps(["swim", "strength", "vo2"])
+        )
+        self.db.add(new_plan)
+        self.db.commit()
+        self.db.refresh(new_plan)
+
+        return new_plan.id
 
     def get_current_week(self) -> int:
         """Get the current week number in the plan."""
@@ -1017,8 +1055,9 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                 result["garmin_sync"] = garmin_results
 
                 # Create PlanAdjustment record for audit trail
+                plan_id = self._ensure_training_plan_exists()
                 plan_adj = PlanAdjustment(
-                    plan_id=1,  # Default plan
+                    plan_id=plan_id,
                     review_id=review.id,
                     adjustment_date=date.today(),
                     adjustment_type=mod.get("type", "unknown"),

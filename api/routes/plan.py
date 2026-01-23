@@ -666,6 +666,9 @@ async def action_review(review_id: int, request: ReviewActionRequest):
         garmin_results = None
         action_time = datetime.utcnow().isoformat()
 
+        # Create manager for plan operations
+        manager = TrainingPlanManager(db, athlete_id)
+
         # Update status of all pending modifications
         for adj in adjustments:
             if adj.get("status", "pending") == "pending":
@@ -675,10 +678,13 @@ async def action_review(review_id: int, request: ReviewActionRequest):
         if request.action == "approve":
             review.approval_notes = request.notes
 
+            # Ensure a training plan exists for the PlanAdjustment foreign key
+            plan_id = manager._ensure_training_plan_exists()
+
             # Create PlanAdjustment records for tracking (only for pending mods)
             for adj in pending_mods:
                 plan_adj = PlanAdjustment(
-                    plan_id=1,  # Default plan
+                    plan_id=plan_id,
                     review_id=review.id,
                     adjustment_date=get_eastern_today(),
                     adjustment_type=adj.get("type", "unknown"),
@@ -689,7 +695,6 @@ async def action_review(review_id: int, request: ReviewActionRequest):
 
             # Apply modifications to ScheduledWorkouts and sync to Garmin
             try:
-                manager = TrainingPlanManager(db, athlete_id)
                 garmin_results = manager.apply_approved_modifications(
                     pending_mods,
                     sync_to_garmin=True
