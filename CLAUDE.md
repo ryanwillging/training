@@ -227,6 +227,90 @@ Data sources:
 - Strength Training: sportTypeId 5
 - Running: sportTypeId 1
 
+### Local Garmin Sync (Required for Calendar Updates)
+
+The `garminconnect` library does NOT support workout upload/creation. Use `garth` for direct API calls:
+
+```python
+import os
+import garth
+from dotenv import load_dotenv
+load_dotenv('.env.production')
+
+# Authenticate (tokens saved to ~/.garth/)
+token_dir = os.path.expanduser("~/.garth")
+try:
+    garth.resume(token_dir)
+except:
+    email = os.environ.get("GARMIN_EMAIL")
+    password = os.environ.get("GARMIN_PASSWORD")
+    garth.login(email, password)
+    garth.save(token_dir)
+```
+
+**Delete a workout from calendar:**
+```python
+workout_id = 1442151086  # From ScheduledWorkout.garmin_workout_id
+garth.connectapi(f"/workout-service/workout/{workout_id}", method="DELETE")
+```
+
+**View calendar for a month:**
+```python
+# month is 0-indexed (0=Jan, 11=Dec)
+response = garth.connectapi("/calendar-service/year/2026/month/0")
+for item in response.get("calendarItems", []):
+    if item.get("itemType") == "workout":
+        print(f"{item['date']}: {item['title']} (id: {item['workoutId']})")
+```
+
+**Full sync script for modified workouts:**
+```bash
+source venv/bin/activate
+python3 << 'EOF'
+import os
+import garth
+from dotenv import load_dotenv
+load_dotenv('.env.production')
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from database.models import ScheduledWorkout
+from datetime import date, timedelta
+
+# Setup
+token_dir = os.path.expanduser("~/.garth")
+garth.resume(token_dir)
+
+db_url = os.environ.get("DATABASE_URL", "").replace("postgres://", "postgresql://", 1)
+engine = create_engine(db_url)
+db = sessionmaker(bind=engine)()
+
+# Find modified workouts with Garmin IDs
+today = date.today()
+workouts = db.query(ScheduledWorkout).filter(
+    ScheduledWorkout.status.in_(["modified", "skipped"]),
+    ScheduledWorkout.garmin_workout_id.isnot(None),
+    ScheduledWorkout.scheduled_date >= today - timedelta(days=7)
+).all()
+
+# Delete each from Garmin and clear the ID
+for w in workouts:
+    print(f"Deleting {w.scheduled_date} {w.workout_type} (ID: {w.garmin_workout_id})")
+    try:
+        garth.connectapi(f"/workout-service/workout/{w.garmin_workout_id}", method="DELETE")
+        w.garmin_workout_id = None
+        w.garmin_calendar_date = None
+        print("  ✓ Deleted")
+    except Exception as e:
+        print(f"  ✗ Error: {e}")
+
+db.commit()
+db.close()
+EOF
+```
+
+**Note:** Creating NEW workouts via API is complex (requires specific JSON structure). The current approach is to delete modified workouts from Garmin calendar, allowing the user to do lighter/modified versions without a prescribed workout.
+
 ## Goal Analysis
 The AI evaluation pipeline (`chatgpt_evaluator.py`) is the primary system for goal analysis and recommendations. Rule-based analysis modules were consolidated into the unified AI evaluation.
 
