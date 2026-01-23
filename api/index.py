@@ -1512,11 +1512,30 @@ class handler(BaseHTTPRequestHandler):
             for w in sorted(week_workouts, key=lambda x: x.scheduled_date):
                 style = WORKOUT_STYLES.get(w.workout_type, {"icon": "💪", "label": w.workout_type, "color": "#666"})
 
+                # Parse workout_data_json to get intensity modifier
+                intensity_modifier = None
+                if w.workout_data_json:
+                    try:
+                        workout_data = json.loads(w.workout_data_json) if isinstance(w.workout_data_json, str) else w.workout_data_json
+                        intensity_modifier = workout_data.get("intensity_modifier")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                # Build workout title with intensity if modified
+                workout_title = w.workout_name or style["label"]
+                if intensity_modifier and intensity_modifier < 1.0:
+                    intensity_pct = int(intensity_modifier * 100)
+                    workout_title += f' <span class="intensity-badge">@ {intensity_pct}%</span>'
+
                 status_badge = ""
                 if w.status == "completed":
                     status_badge = '<span class="workout-status completed">✓ Completed</span>'
                 elif w.status == "skipped":
                     status_badge = '<span class="workout-status skipped">Skipped</span>'
+                elif w.status == "modified" and w.garmin_workout_id:
+                    status_badge = '<span class="workout-status modified">Modified · Synced</span>'
+                elif w.status == "modified":
+                    status_badge = '<span class="workout-status modified">Modified</span>'
                 elif w.garmin_workout_id:
                     status_badge = '<span class="workout-status synced">Synced to Garmin</span>'
 
@@ -1568,7 +1587,7 @@ class handler(BaseHTTPRequestHandler):
                             {style["icon"]}
                         </div>
                         <div class="workout-info">
-                            <div class="workout-title">{w.workout_name or style["label"]}</div>
+                            <div class="workout-title">{workout_title}</div>
                             <div class="workout-meta">
                                 <span class="workout-day">{day_label}</span>
                                 {f'<span class="workout-duration">{duration_text}</span>' if duration_text else ''}
@@ -1799,6 +1818,22 @@ class handler(BaseHTTPRequestHandler):
             .workout-status.synced {{
                 background: #e3f2fd;
                 color: #1565c0;
+            }}
+            .workout-status.modified {{
+                background: #fff8e1;
+                color: #f57c00;
+            }}
+
+            /* Intensity badge for modified workouts */
+            .intensity-badge {{
+                display: inline-block;
+                background: #fff8e1;
+                color: #f57c00;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 2px 6px;
+                border-radius: 4px;
+                margin-left: 6px;
             }}
 
             /* Workout Details (Expandable) */
