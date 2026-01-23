@@ -621,21 +621,20 @@ class GarminWorkoutManager:
             return None
 
     @staticmethod
-    def parse_total_reps(sets_str: str) -> Optional[int]:
+    def parse_sets_and_reps(sets_str: str) -> Tuple[Optional[int], Optional[int]]:
         """
-        Parse total reps from a sets string like "3×8-10" or "2×10".
+        Parse sets and reps from a string like "3×8-10" or "2×10".
 
         For ranges like "8-10", uses the average.
-        Returns total reps across all sets (sets × reps).
 
         Args:
             sets_str: Sets string like "3×8-10" or "2×10"
 
         Returns:
-            Total reps as integer, or None if cannot parse
+            Tuple of (num_sets, reps_per_set), or (None, None) if cannot parse
         """
         if not sets_str:
-            return None
+            return None, None
 
         # Match patterns like "3×8-10", "2x10", "4×12"
         match = re.match(r'(\d+)[×x](\d+)(?:-(\d+))?', sets_str, re.IGNORECASE)
@@ -643,12 +642,11 @@ class GarminWorkoutManager:
             num_sets = int(match.group(1))
             reps_low = int(match.group(2))
             reps_high = int(match.group(3)) if match.group(3) else reps_low
-            avg_reps = (reps_low + reps_high) / 2
+            avg_reps = int((reps_low + reps_high) / 2)
 
-            # Total reps across all sets
-            return int(num_sets * avg_reps)
+            return num_sets, avg_reps
 
-        return None
+        return None, None
 
     def _create_strength_step(
         self,
@@ -703,11 +701,11 @@ class GarminWorkoutManager:
                 end_condition_value = duration_secs
 
         if end_condition is None and sets:
-            # Use reps-based condition for strength exercises
-            total_reps = self.parse_total_reps(sets)
-            if total_reps:
+            # Use reps-based condition for strength exercises (per set, not total)
+            _, reps_per_set = self.parse_sets_and_reps(sets)
+            if reps_per_set:
                 end_condition = self.CONDITION_TYPE_MAP["reps"]
-                end_condition_value = float(total_reps)
+                end_condition_value = float(reps_per_set)
 
         if end_condition is None:
             # Fallback to lap button only if we have no other option
@@ -754,6 +752,10 @@ class GarminWorkoutManager:
         """
         Convert a strength exercise dictionary to Garmin step(s).
 
+        For exercises with sets (e.g., "3×8-10"), creates a RepeatGroupDTO (round)
+        containing the exercise step. This matches Garmin's UI where you add
+        "Rounds" for sets.
+
         Args:
             exercise: Exercise dictionary with keys like 'name', 'sets', 'duration', 'notes'
             step_order: Starting step order number
@@ -766,20 +768,53 @@ class GarminWorkoutManager:
         current_order = step_order
 
         name = exercise.get("name", "Exercise")
-        sets = exercise.get("sets")
+        sets_str = exercise.get("sets")
         duration = exercise.get("duration")
         notes = exercise.get("notes")
 
-        step = self._create_strength_step(
-            exercise_name=name,
-            step_order=current_order,
-            step_type=step_type,
-            sets=sets,
-            duration=duration,
-            notes=notes
-        )
-        steps.append(step)
-        current_order += 1
+        # Parse sets to determine if we need a repeat group
+        num_sets, reps_per_set = self.parse_sets_and_reps(sets_str) if sets_str else (None, None)
+
+        if num_sets and num_sets > 1 and reps_per_set:
+            # Create a RepeatGroupDTO (round) for multiple sets
+            # The inner step has reps for one set
+            inner_step = self._create_strength_step(
+                exercise_name=name,
+                step_order=1,  # Order within the group
+                step_type="interval",  # Exercise steps within rounds
+                sets=None,  # Don't pass sets - we handle it with the repeat group
+                duration=None,
+                notes=notes
+            )
+            # Set the reps for one set
+            inner_step["endCondition"] = self.CONDITION_TYPE_MAP["reps"]
+            inner_step["endConditionValue"] = float(reps_per_set)
+
+            # Build description for the round
+            round_desc = f"{name} ({num_sets}×{reps_per_set})"
+            if notes:
+                round_desc += f" - {notes}"
+
+            repeat_group = self._create_repeat_group(
+                iterations=num_sets,
+                child_steps=[inner_step],
+                step_order=current_order,
+                description=round_desc
+            )
+            steps.append(repeat_group)
+            current_order += 1
+        else:
+            # Single step (no repeat group) - for warmup/cooldown with duration
+            step = self._create_strength_step(
+                exercise_name=name,
+                step_order=current_order,
+                step_type=step_type,
+                sets=sets_str,
+                duration=duration,
+                notes=notes
+            )
+            steps.append(step)
+            current_order += 1
 
         return steps, current_order
 
