@@ -110,6 +110,7 @@ class GarminWorkoutManager:
         "lap.button": {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
         "lap_button": {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
         "open": {"conditionTypeId": 1, "conditionTypeKey": "lap.button", "displayOrder": 1, "displayable": True},
+        "reps": {"conditionTypeId": 10, "conditionTypeKey": "reps", "displayOrder": 10, "displayable": True},
     }
 
     # Pool length unit for swimming (25 yards)
@@ -620,20 +621,18 @@ class GarminWorkoutManager:
             return None
 
     @staticmethod
-    def estimate_exercise_duration(sets_str: str) -> Optional[float]:
+    def parse_total_reps(sets_str: str) -> Optional[int]:
         """
-        Estimate the duration of a strength exercise based on sets/reps.
+        Parse total reps from a sets string like "3×8-10" or "2×10".
 
-        Assumptions:
-        - Each rep takes ~3 seconds
-        - Rest between sets is ~75 seconds
-        - For ranges like "8-10", use the average
+        For ranges like "8-10", uses the average.
+        Returns total reps across all sets (sets × reps).
 
         Args:
             sets_str: Sets string like "3×8-10" or "2×10"
 
         Returns:
-            Estimated duration in seconds, or None if cannot parse
+            Total reps as integer, or None if cannot parse
         """
         if not sets_str:
             return None
@@ -646,14 +645,8 @@ class GarminWorkoutManager:
             reps_high = int(match.group(3)) if match.group(3) else reps_low
             avg_reps = (reps_low + reps_high) / 2
 
-            # Calculate time
-            seconds_per_rep = 3
-            rest_between_sets = 75  # seconds
-
-            work_time = num_sets * avg_reps * seconds_per_rep
-            rest_time = (num_sets - 1) * rest_between_sets  # no rest after last set
-
-            return work_time + rest_time
+            # Total reps across all sets
+            return int(num_sets * avg_reps)
 
         return None
 
@@ -698,23 +691,23 @@ class GarminWorkoutManager:
             desc_parts.append(f"- {notes}")
         description = " ".join(desc_parts)
 
-        # Determine end condition - prefer time-based over lap button
+        # Determine end condition - prefer reps for strength, time for warmup/cooldown
         end_condition = None
         end_condition_value = None
 
         if duration:
-            # Parse explicit duration
+            # Parse explicit duration (typically for warmup/cooldown)
             duration_secs = self.parse_duration_string(duration)
             if duration_secs:
                 end_condition = self.CONDITION_TYPE_MAP["time"]
                 end_condition_value = duration_secs
 
         if end_condition is None and sets:
-            # Estimate duration from sets/reps
-            estimated_secs = self.estimate_exercise_duration(sets)
-            if estimated_secs:
-                end_condition = self.CONDITION_TYPE_MAP["time"]
-                end_condition_value = estimated_secs
+            # Use reps-based condition for strength exercises
+            total_reps = self.parse_total_reps(sets)
+            if total_reps:
+                end_condition = self.CONDITION_TYPE_MAP["reps"]
+                end_condition_value = float(total_reps)
 
         if end_condition is None:
             # Fallback to lap button only if we have no other option
