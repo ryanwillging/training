@@ -205,10 +205,9 @@ class TrainingPlanManager:
                 # Convert to Garmin workout
                 garmin_workout = self._create_garmin_workout(scheduled)
                 if garmin_workout:
-                    # Upload and schedule
-                    workout_id, success = self.garmin_manager.create_and_schedule_workout(
-                        garmin_workout,
-                        scheduled.scheduled_date
+                    # Upload and schedule (handles both dict and GarminWorkout types)
+                    workout_id, success = self._upload_and_schedule_garmin_workout(
+                        garmin_workout, scheduled.scheduled_date
                     )
 
                     if workout_id:
@@ -242,28 +241,166 @@ class TrainingPlanManager:
 
         return results
 
+    def _upload_and_schedule_garmin_workout(
+        self,
+        garmin_workout,
+        scheduled_date: date
+    ) -> Tuple[Optional[str], bool]:
+        """
+        Upload and schedule a Garmin workout, handling both dict and GarminWorkout types.
+
+        Args:
+            garmin_workout: Either a dict (detailed JSON) or GarminWorkout object
+            scheduled_date: Date to schedule the workout
+
+        Returns:
+            Tuple of (workout_id, success)
+        """
+        if garmin_workout is None:
+            return None, False
+
+        if isinstance(garmin_workout, dict):
+            # Detailed workout JSON - upload directly and schedule
+            workout_id = self.garmin_manager.upload_detailed_workout(garmin_workout)
+            if workout_id:
+                success = self.garmin_manager.schedule_workout(workout_id, scheduled_date)
+                return workout_id, success
+            return None, False
+        else:
+            # GarminWorkout object - use standard upload
+            return self.garmin_manager.create_and_schedule_workout(
+                garmin_workout, scheduled_date
+            )
+
+    def _get_swim_workout_details(self, workout_type: str, week_number: int) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get detailed workout structure for swim workouts.
+
+        Returns a dictionary with warmup, main, and cooldown exercise lists
+        in the format expected by GarminWorkoutManager.create_detailed_swim_workout().
+        """
+        # Swim A - Threshold/CSS Development main sets
+        swim_a_main_sets = {
+            (1, 2): "10×100 @ steady (RPE 6-7), 15-20s rest",
+            (3, 4): "8×125 @ steady, 15-20s rest",
+            (5, 6): "6×150 @ steady, 20-25s rest",
+            (7, 8): "5×200 @ steady, 20-30s rest",
+            (9, 10): "12×100 @ CSS pace, 10-15s rest",
+            (11, 12): "8×150 @ CSS pace, 15-20s rest",
+            (13, 14): "6×200 @ CSS pace, 20s rest",
+            (15, 16): "4×300 @ slightly slower than CSS, 30s rest",
+            (17, 18): "3×(4×100 @ target 400 pace), 15-20s rest; 2 min between rounds",
+            (19, 20): "6×150 @ target 400 pace, 20-30s rest",
+            (21, 22): "3×300 @ target 400 pace, 30-45s rest",
+            (23, 23): "6×50 @ target 400 pace, generous rest",
+            (24, 24): "Light technique + 400 TT on Swim B day",
+        }
+
+        # Swim B - VO2 + 400-Specific main sets
+        swim_b_main_sets = {
+            (1, 2): "12×50 @ moderate-hard (RPE 7), 20s rest",
+            (3, 4): "16×50 @ moderate-hard, 20s rest",
+            (5, 6): "8×75 @ moderate-hard, 25s rest",
+            (7, 8): "10×50 @ strong (RPE 8), 25s rest",
+            (9, 10): "20×25 @ hard (RPE 9), 10-20s rest",
+            (11, 12): "10×50 @ hard (RPE 8-9), 30-40s rest",
+            (13, 14): "5×100 @ hard (RPE 8-9), 45-60s rest",
+            (15, 16): "Broken 400: 4×100 @ target 400 pace, 20-30s rest",
+            (17, 18): "12×50 @ hard (RPE 8-9), 30-40s rest",
+            (19, 20): "8×75 @ hard, 45s rest",
+            (21, 22): "5×100 @ hard, 60s rest",
+            (23, 23): "8×25 fast-but-clean, lots of rest",
+            (24, 24): "400 TT (push)",
+        }
+
+        def get_main_set(sets_dict, week):
+            for (start, end), main_set in sets_dict.items():
+                if start <= week <= end:
+                    return main_set
+            return "Main Set"
+
+        if workout_type == "swim_a":
+            main_set = get_main_set(swim_a_main_sets, week_number)
+            # Test week adjustment
+            if week_number in [2, 12, 24]:
+                main_set = "6×50 @ CSS/target 400 pace, 30-45s rest (Test week taper)"
+            return {
+                "warmup": [
+                    {"name": "Easy swim", "distance": "300 yards"},
+                    {"name": "Drill/swim by 25", "sets": "6×50", "rest": "15-20s", "notes": "Catch-up, fingertip drag"}
+                ],
+                "main": [
+                    {"name": "Main Set", "description": main_set}
+                ],
+                "cooldown": [
+                    {"name": "Easy swim", "distance": "200 yards"}
+                ]
+            }
+
+        elif workout_type == "swim_b":
+            main_set = get_main_set(swim_b_main_sets, week_number)
+            return {
+                "warmup": [
+                    {"name": "Easy swim", "distance": "300 yards"},
+                    {"name": "Build swims", "sets": "4×50", "rest": "15-20s", "notes": "Easy → moderate"},
+                    {"name": "Fast-but-clean", "sets": "4×25", "rest": "30-45s", "notes": "Crisp speed, good form"}
+                ],
+                "main": [
+                    {"name": "Main Set", "description": main_set}
+                ],
+                "cooldown": [
+                    {"name": "Easy swim", "distance": "200 yards"}
+                ]
+            }
+
+        elif workout_type == "swim_test":
+            return {
+                "warmup": [
+                    {"name": "Easy swim", "distance": "300 yards"},
+                    {"name": "Build swims", "sets": "4×50", "rest": "30s", "notes": "Easy → race pace"}
+                ],
+                "main": [
+                    {"name": "400 Time Trial", "description": "400×1 @ all-out effort, push start"}
+                ],
+                "cooldown": [
+                    {"name": "Easy swim", "distance": "200 yards"}
+                ]
+            }
+
+        return {"warmup": [], "main": [], "cooldown": []}
+
     def _create_garmin_workout(self, scheduled: ScheduledWorkout) -> Optional["GarminWorkout"]:
-        """Convert a scheduled workout to Garmin format."""
+        """
+        Convert a scheduled workout to Garmin format.
+
+        Note: For swim workouts, this returns a dict (detailed Garmin JSON format).
+        For other workout types, this returns a GarminWorkout object.
+        The sync methods should check the type and handle accordingly.
+        """
         if not GARMIN_AVAILABLE or self.garmin_manager is None:
             return None
 
         workout_data = json.loads(scheduled.workout_data_json) if scheduled.workout_data_json else {}
 
         if scheduled.workout_type in ["swim_a", "swim_b", "swim_test"]:
-            # Get main set description from workout data
-            main_set = ""
-            for phase in workout_data.get("phases", []):
-                if "main" in phase.get("name", "").lower():
-                    exercises = phase.get("exercises", [])
-                    if exercises:
-                        main_set = exercises[0].get("notes", "") or exercises[0].get("description", "")
-                    break
+            # Get detailed workout structure for swim workouts
+            workout_details = self._get_swim_workout_details(
+                scheduled.workout_type,
+                scheduled.week_number
+            )
 
-            return self.garmin_manager.create_swim_workout(
-                name=scheduled.workout_name or f"Swim Week {scheduled.week_number}",
+            # Apply intensity modifier if present
+            intensity_modifier = workout_data.get("intensity_modifier")
+            workout_name = scheduled.workout_name or f"Swim Week {scheduled.week_number}"
+            if intensity_modifier:
+                pct = int(intensity_modifier * 100)
+                workout_name += f" ({pct}%)"
+
+            # Return detailed workout JSON (dict) for direct upload
+            return self.garmin_manager.create_detailed_swim_workout(
+                name=workout_name,
                 week_number=scheduled.week_number,
-                main_set_description=main_set or "See workout details",
-                is_test_day=(scheduled.workout_type == "swim_test")
+                workout_details=workout_details
             )
 
         elif scheduled.workout_type in ["lift_a", "lift_b"]:
@@ -772,7 +909,7 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                                 # Create new workout with modifications
                                 garmin_workout = self._create_garmin_workout(target_workout)
                                 if garmin_workout:
-                                    new_id, scheduled = self.garmin_manager.create_and_schedule_workout(
+                                    new_id, success = self._upload_and_schedule_garmin_workout(
                                         garmin_workout,
                                         target_workout.scheduled_date
                                     )
@@ -822,7 +959,7 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                                     # Re-create and schedule on new date
                                     garmin_workout = self._create_garmin_workout(target_workout)
                                     if garmin_workout:
-                                        new_id, scheduled = self.garmin_manager.create_and_schedule_workout(
+                                        new_id, success = self._upload_and_schedule_garmin_workout(
                                             garmin_workout,
                                             new_date
                                         )
@@ -873,7 +1010,7 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                                 self.garmin_manager.delete_workout(old_garmin_id)
                                 garmin_workout = self._create_garmin_workout(target_workout)
                                 if garmin_workout:
-                                    new_id, scheduled = self.garmin_manager.create_and_schedule_workout(
+                                    new_id, success = self._upload_and_schedule_garmin_workout(
                                         garmin_workout,
                                         target_workout.scheduled_date
                                     )

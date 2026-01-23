@@ -8,6 +8,7 @@ garminconnect library doesn't fully support workout creation.
 
 import json
 import os
+import re
 from datetime import date, datetime, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, asdict
@@ -113,6 +114,510 @@ class GarminWorkoutManager:
 
     # Pool length unit for swimming (25 yards)
     POOL_LENGTH_UNIT = {"unitId": 230, "unitKey": "yard", "factor": 91.44}
+
+    # Fixed rest condition
+    FIXED_REST_CONDITION = {"conditionTypeId": 8, "conditionTypeKey": "fixed.rest", "displayOrder": 8, "displayable": True}
+
+    # Iterations condition for repeat groups
+    ITERATIONS_CONDITION = {"conditionTypeId": 7, "conditionTypeKey": "iterations", "displayOrder": 7, "displayable": False}
+
+    @staticmethod
+    def parse_sets_string(sets_str: str) -> Tuple[Optional[int], Optional[float], Optional[str]]:
+        """
+        Parse a sets string like "4×50" or "3×8-10" or "2×30s".
+
+        Returns:
+            Tuple of (reps, value, unit) where unit is "distance", "time", or "reps"
+        """
+        if not sets_str:
+            return None, None, None
+
+        # Match patterns like "4×50", "3x8-10", "2×30s"
+        match = re.match(r'(\d+)[×x](\d+(?:-\d+)?)(s|m|min|y|yd|yards?)?', sets_str, re.IGNORECASE)
+        if match:
+            reps = int(match.group(1))
+            value_str = match.group(2)
+            unit_suffix = match.group(3)
+
+            # Handle range like "8-10" by taking average
+            if '-' in value_str:
+                parts = value_str.split('-')
+                value = (int(parts[0]) + int(parts[1])) / 2
+            else:
+                value = float(value_str)
+
+            # Determine unit type
+            if unit_suffix and unit_suffix.lower() in ('s', 'm', 'min'):
+                unit = "time"
+                if unit_suffix.lower() in ('m', 'min'):
+                    value *= 60  # Convert minutes to seconds
+            elif unit_suffix and unit_suffix.lower() in ('y', 'yd', 'yard', 'yards'):
+                unit = "distance"
+            else:
+                # Default: if value > 20, assume distance in yards; else assume reps
+                unit = "distance" if value > 20 else "reps"
+
+            return reps, value, unit
+
+        return None, None, None
+
+    @staticmethod
+    def parse_rest_string(rest_str: str) -> Optional[float]:
+        """
+        Parse a rest string like "15-20s" or "20s" or "2 min" or "45-60s".
+
+        Returns:
+            Rest time in seconds, or None if cannot parse
+        """
+        if not rest_str:
+            return None
+
+        # Handle ranges like "15-20s" or "45-60s"
+        range_match = re.match(r'(\d+)-(\d+)\s*(s|sec|seconds?|m|min|minutes?)?', rest_str, re.IGNORECASE)
+        if range_match:
+            low = int(range_match.group(1))
+            high = int(range_match.group(2))
+            unit = range_match.group(3) or 's'
+            avg = (low + high) / 2
+            if unit.lower() in ('m', 'min', 'minute', 'minutes'):
+                return avg * 60
+            return avg
+
+        # Handle single values like "20s" or "2 min"
+        single_match = re.match(r'(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?)?', rest_str, re.IGNORECASE)
+        if single_match:
+            value = float(single_match.group(1))
+            unit = single_match.group(2) or 's'
+            if unit.lower() in ('m', 'min', 'minute', 'minutes'):
+                return value * 60
+            return value
+
+        return None
+
+    @staticmethod
+    def parse_distance_string(distance_str: str) -> Optional[float]:
+        """
+        Parse a distance string like "300 yards" or "200y" or "400".
+
+        Returns:
+            Distance in yards, or None if cannot parse
+        """
+        if not distance_str:
+            return None
+
+        # Match patterns like "300 yards", "200y", "400"
+        match = re.match(r'(\d+(?:\.\d+)?)\s*(y|yd|yards?|m|meters?)?', distance_str, re.IGNORECASE)
+        if match:
+            value = float(match.group(1))
+            # Assume yards if not specified (for swimming)
+            return value
+
+        return None
+
+    @staticmethod
+    def parse_duration_string(duration_str: str) -> Optional[float]:
+        """
+        Parse a duration string like "5 min" or "30s" or "5-8 min".
+
+        Returns:
+            Duration in seconds, or None if cannot parse
+        """
+        if not duration_str:
+            return None
+
+        # Handle ranges like "5-8 min"
+        range_match = re.match(r'(\d+)-(\d+)\s*(s|sec|seconds?|m|min|minutes?)?', duration_str, re.IGNORECASE)
+        if range_match:
+            low = int(range_match.group(1))
+            high = int(range_match.group(2))
+            unit = range_match.group(3) or 'min'
+            avg = (low + high) / 2
+            if unit.lower() in ('m', 'min', 'minute', 'minutes'):
+                return avg * 60
+            return avg
+
+        # Handle single values
+        single_match = re.match(r'(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?)?', duration_str, re.IGNORECASE)
+        if single_match:
+            value = float(single_match.group(1))
+            unit = single_match.group(2) or 'min'
+            if unit.lower() in ('m', 'min', 'minute', 'minutes'):
+                return value * 60
+            return value
+
+        return None
+
+    def _create_repeat_group(
+        self,
+        iterations: int,
+        child_steps: List[Dict[str, Any]],
+        step_order: int,
+        description: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Create a RepeatGroupDTO for Garmin workouts.
+
+        Args:
+            iterations: Number of times to repeat the group
+            child_steps: List of child step dictionaries (already in Garmin format)
+            step_order: Step order number for this group
+            description: Optional description for the repeat group
+
+        Returns:
+            RepeatGroupDTO dictionary
+        """
+        return {
+            "type": "RepeatGroupDTO",
+            "stepOrder": step_order,
+            "stepType": None,
+            "childStepId": 1,
+            "description": description,
+            "numberOfIterations": iterations,
+            "smartRepeat": False,
+            "endCondition": self.ITERATIONS_CONDITION,
+            "endConditionValue": float(iterations),
+            "preferredEndConditionUnit": None,
+            "workoutSteps": child_steps
+        }
+
+    def _create_swim_interval_step(
+        self,
+        distance: float,
+        step_order: int,
+        step_type: str = "interval",
+        description: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Create a swim interval step (distance-based).
+
+        Args:
+            distance: Distance in yards
+            step_order: Step order number
+            step_type: Step type key (interval, warmup, cooldown, recovery)
+            description: Optional description
+
+        Returns:
+            ExecutableStepDTO dictionary
+        """
+        step_type_map = {
+            "interval": {"stepTypeId": 3, "stepTypeKey": "interval", "displayOrder": 3},
+            "warmup": {"stepTypeId": 1, "stepTypeKey": "warmup", "displayOrder": 1},
+            "cooldown": {"stepTypeId": 2, "stepTypeKey": "cooldown", "displayOrder": 2},
+            "recovery": {"stepTypeId": 4, "stepTypeKey": "recovery", "displayOrder": 4},
+        }
+
+        return {
+            "type": "ExecutableStepDTO",
+            "stepOrder": step_order,
+            "stepType": step_type_map.get(step_type, step_type_map["interval"]),
+            "childStepId": None,
+            "description": description,
+            "endCondition": self.CONDITION_TYPE_MAP["distance"],
+            "endConditionValue": float(distance),
+            "preferredEndConditionUnit": self.POOL_LENGTH_UNIT,
+            "endConditionCompare": None,
+            "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1},
+            "targetValueOne": None,
+            "targetValueTwo": None,
+            "targetValueUnit": None,
+            "zoneNumber": None,
+            "secondaryTargetType": None,
+            "secondaryTargetValueOne": None,
+            "secondaryTargetValueTwo": None,
+            "secondaryTargetValueUnit": None,
+            "secondaryZoneNumber": None,
+            "endConditionZone": None,
+            "strokeType": {"strokeTypeId": 6, "strokeTypeKey": "free", "displayOrder": 6},
+            "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None, "displayOrder": 0},
+            "category": None,
+            "exerciseName": None,
+            "workoutProvider": None,
+            "providerExerciseSourceId": None,
+            "weightValue": None,
+            "weightUnit": None
+        }
+
+    def _create_rest_step(
+        self,
+        rest_seconds: float,
+        step_order: int,
+        description: str = "Rest"
+    ) -> Dict[str, Any]:
+        """
+        Create a rest step (time-based).
+
+        Args:
+            rest_seconds: Rest duration in seconds
+            step_order: Step order number
+            description: Optional description
+
+        Returns:
+            ExecutableStepDTO dictionary for rest
+        """
+        return {
+            "type": "ExecutableStepDTO",
+            "stepOrder": step_order,
+            "stepType": {"stepTypeId": 5, "stepTypeKey": "rest", "displayOrder": 5},
+            "childStepId": None,
+            "description": description,
+            "endCondition": self.FIXED_REST_CONDITION,
+            "endConditionValue": float(rest_seconds),
+            "preferredEndConditionUnit": None,
+            "endConditionCompare": None,
+            "targetType": {"workoutTargetTypeId": 1, "workoutTargetTypeKey": "no.target", "displayOrder": 1},
+            "targetValueOne": None,
+            "targetValueTwo": None,
+            "targetValueUnit": None,
+            "zoneNumber": None,
+            "secondaryTargetType": None,
+            "secondaryTargetValueOne": None,
+            "secondaryTargetValueTwo": None,
+            "secondaryTargetValueUnit": None,
+            "secondaryZoneNumber": None,
+            "endConditionZone": None,
+            "strokeType": {"strokeTypeId": 6, "strokeTypeKey": "free", "displayOrder": 6},
+            "equipmentType": {"equipmentTypeId": 0, "equipmentTypeKey": None, "displayOrder": 0},
+            "category": None,
+            "exerciseName": None,
+            "workoutProvider": None,
+            "providerExerciseSourceId": None,
+            "weightValue": None,
+            "weightUnit": None
+        }
+
+    def _exercise_to_garmin_steps(
+        self,
+        exercise: Dict[str, Any],
+        step_order: int,
+        step_type: str = "interval"
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Convert an exercise dictionary to Garmin step(s).
+
+        Handles both simple distance exercises and sets with rest.
+
+        Args:
+            exercise: Exercise dictionary with keys like 'distance', 'sets', 'rest', 'name'
+            step_order: Starting step order number
+            step_type: Type of step (warmup, interval, cooldown)
+
+        Returns:
+            Tuple of (list of steps, next step order)
+        """
+        steps = []
+        current_order = step_order
+
+        # Check for simple distance-based exercise
+        if exercise.get("distance") and not exercise.get("sets"):
+            distance = self.parse_distance_string(exercise["distance"])
+            if distance:
+                step = self._create_swim_interval_step(
+                    distance=distance,
+                    step_order=current_order,
+                    step_type=step_type,
+                    description=exercise.get("name", "")
+                )
+                steps.append(step)
+                current_order += 1
+            return steps, current_order
+
+        # Check for sets-based exercise (e.g., "4×50")
+        if exercise.get("sets"):
+            reps, value, unit = self.parse_sets_string(exercise["sets"])
+            rest_seconds = self.parse_rest_string(exercise.get("rest", ""))
+
+            if reps and value and unit == "distance":
+                # Create repeat group with interval + optional rest
+                child_steps = []
+
+                # Interval step
+                interval_step = self._create_swim_interval_step(
+                    distance=value,
+                    step_order=1,
+                    step_type="interval",
+                    description=exercise.get("notes", exercise.get("name", ""))
+                )
+                child_steps.append(interval_step)
+
+                # Rest step (if specified)
+                if rest_seconds:
+                    rest_step = self._create_rest_step(
+                        rest_seconds=rest_seconds,
+                        step_order=2,
+                        description=f"{int(rest_seconds)}s rest"
+                    )
+                    child_steps.append(rest_step)
+
+                # Create repeat group
+                group_desc = f"{reps}×{int(value)}"
+                if rest_seconds:
+                    group_desc += f", {int(rest_seconds)}s rest"
+                if exercise.get("notes"):
+                    group_desc += f" - {exercise['notes']}"
+
+                repeat_group = self._create_repeat_group(
+                    iterations=reps,
+                    child_steps=child_steps,
+                    step_order=current_order,
+                    description=group_desc
+                )
+                steps.append(repeat_group)
+                current_order += 1
+
+            return steps, current_order
+
+        # Fallback: parse description for main set pattern like "12×50 @ moderate-hard, 20s rest"
+        description = exercise.get("description", "")
+        if description:
+            # Try to parse "12×50 @ intensity, 20s rest" pattern
+            match = re.match(r'(\d+)[×x](\d+)\s*@\s*([^,]+),?\s*(\d+s?\s*rest)?', description, re.IGNORECASE)
+            if match:
+                reps = int(match.group(1))
+                distance = float(match.group(2))
+                intensity = match.group(3).strip()
+                rest_match = match.group(4)
+                rest_seconds = self.parse_rest_string(rest_match) if rest_match else 20.0
+
+                child_steps = []
+
+                # Interval step
+                interval_step = self._create_swim_interval_step(
+                    distance=distance,
+                    step_order=1,
+                    step_type="interval",
+                    description=intensity
+                )
+                child_steps.append(interval_step)
+
+                # Rest step
+                rest_step = self._create_rest_step(
+                    rest_seconds=rest_seconds,
+                    step_order=2,
+                    description=f"{int(rest_seconds)}s rest"
+                )
+                child_steps.append(rest_step)
+
+                repeat_group = self._create_repeat_group(
+                    iterations=reps,
+                    child_steps=child_steps,
+                    step_order=current_order,
+                    description=f"{reps}×{int(distance)} @ {intensity}"
+                )
+                steps.append(repeat_group)
+                current_order += 1
+
+                return steps, current_order
+
+        return steps, current_order
+
+    def create_detailed_swim_workout(
+        self,
+        name: str,
+        week_number: int,
+        workout_details: Dict[str, List[Dict[str, Any]]],
+        pool_length: int = 25
+    ) -> Dict[str, Any]:
+        """
+        Create a detailed swim workout with individual sets/reps for Garmin.
+
+        Args:
+            name: Workout name
+            week_number: Week number in training plan
+            workout_details: Dictionary with 'warmup', 'main', 'cooldown' lists
+                Each list contains exercise dictionaries with keys like:
+                - distance: "300 yards"
+                - sets: "4×50"
+                - rest: "15-20s"
+                - name: "Easy swim"
+                - description: "12×50 @ moderate-hard (RPE 7), 20s rest"
+            pool_length: Pool length in yards (default 25)
+
+        Returns:
+            Garmin workout JSON ready for API upload
+        """
+        sport_info = self.SPORT_TYPE_MAP[WorkoutSportType.SWIMMING]
+        garmin_steps = []
+        step_order = 1
+
+        # Process warmup
+        warmup_exercises = workout_details.get("warmup", [])
+        for exercise in warmup_exercises:
+            # First warmup item uses warmup step type
+            step_type = "warmup" if step_order == 1 else "interval"
+            new_steps, step_order = self._exercise_to_garmin_steps(exercise, step_order, step_type)
+            garmin_steps.extend(new_steps)
+
+        # Process main set
+        main_exercises = workout_details.get("main", [])
+        for exercise in main_exercises:
+            new_steps, step_order = self._exercise_to_garmin_steps(exercise, step_order, "interval")
+            garmin_steps.extend(new_steps)
+
+        # Process cooldown
+        cooldown_exercises = workout_details.get("cooldown", [])
+        for exercise in cooldown_exercises:
+            step_type = "cooldown"
+            new_steps, step_order = self._exercise_to_garmin_steps(exercise, step_order, step_type)
+            garmin_steps.extend(new_steps)
+
+        # Build workout JSON
+        workout_json = {
+            "workoutName": name,
+            "description": f"Week {week_number} - Detailed swim workout",
+            "sportType": sport_info,
+            "subSportType": None,
+            "poolLength": float(pool_length),
+            "poolLengthUnit": self.POOL_LENGTH_UNIT,
+            "workoutSegments": [
+                {
+                    "segmentOrder": 1,
+                    "sportType": sport_info,
+                    "poolLengthUnit": self.POOL_LENGTH_UNIT,
+                    "poolLength": float(pool_length),
+                    "avgTrainingSpeed": None,
+                    "estimatedDurationInSecs": None,
+                    "estimatedDistanceInMeters": None,
+                    "estimatedDistanceUnit": None,
+                    "estimateType": None,
+                    "description": None,
+                    "workoutSteps": garmin_steps
+                }
+            ],
+            "estimatedDurationInSecs": 2700,  # 45 min estimate
+            "estimatedDistanceInMeters": None,
+            "avgTrainingSpeed": 0.0
+        }
+
+        return workout_json
+
+    def upload_detailed_workout(self, workout_json: Dict[str, Any]) -> Optional[str]:
+        """
+        Upload a detailed workout (already in Garmin format) to Garmin Connect.
+
+        Args:
+            workout_json: Workout in Garmin API format
+
+        Returns:
+            Workout ID if successful, None otherwise
+        """
+        self._ensure_garth()
+
+        try:
+            result = garth.connectapi(
+                "/workout-service/workout",
+                method="POST",
+                json=workout_json
+            )
+
+            workout_id = str(result.get("workoutId"))
+            print(f"✓ Uploaded detailed workout '{workout_json.get('workoutName')}' - ID: {workout_id}")
+            return workout_id
+
+        except Exception as e:
+            print(f"✗ Error uploading detailed workout: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def __init__(self, client: Optional[GarminClient] = None):
         """
