@@ -229,7 +229,8 @@ async def cron_status():
             base_status["last_run"] = None
             return base_status
 
-        hours_since = (get_eastern_now() - last_run.run_date).total_seconds() / 3600
+        # Use timezone-naive datetime for comparison (database stores naive datetimes)
+        hours_since = (get_eastern_now().replace(tzinfo=None) - last_run.run_date).total_seconds() / 3600
 
         base_status["last_run"] = {
             "date": last_run.run_date.isoformat(),

@@ -22,7 +22,8 @@ def _get_sync_status_html(last_sync) -> str:
     if not last_sync:
         return '<span style="color: var(--md-warning);">⚠ Never synced</span>'
 
-    now = _get_eastern_now()
+    # Use timezone-naive datetime for comparison (database stores naive datetimes)
+    now = _get_eastern_now().replace(tzinfo=None)
     sync_time = last_sync.run_date
     hours_ago = (now - sync_time).total_seconds() / 3600
 
