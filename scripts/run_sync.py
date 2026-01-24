@@ -21,12 +21,17 @@ if env_file.exists():
                 value = value.strip('"').strip("'").replace("\\n", "")
                 os.environ[key] = value
 
+import json
+import time
 from datetime import date, timedelta
 from database.base import engine, Base, SessionLocal
-from database.models import DailyWellness, CompletedActivity
+from database.models import DailyWellness, CompletedActivity, CronLog
+from api.timezone import get_eastern_now
 
 def run_sync():
     """Run the full sync."""
+    start_time = time.time()
+
     # Create tables
     print("Creating/verifying database tables...")
     Base.metadata.create_all(bind=engine)
@@ -42,7 +47,10 @@ def run_sync():
         "garmin_wellness": None,
         "garmin_activities": None,
         "hevy": None,
-        "errors": []
+        "errors": [],
+        "garmin_wellness_imported": 0,
+        "garmin_activities_imported": 0,
+        "hevy_imported": 0
     }
 
     # Sync Garmin wellness data
@@ -58,6 +66,7 @@ def run_sync():
                 imported += 1
             print(f"  {target_date}: {msg}")
         results["garmin_wellness"] = f"{imported} days imported"
+        results["garmin_wellness_imported"] = imported
         print(f"Wellness sync complete: {imported} days")
     except Exception as e:
         error = f"Garmin wellness sync failed: {str(e)}"
@@ -73,6 +82,7 @@ def run_sync():
         importer = GarminActivityImporter(db, athlete_id)
         imported, skipped, errors = importer.import_activities(start_date, end_date)
         results["garmin_activities"] = f"{imported} imported, {skipped} skipped"
+        results["garmin_activities_imported"] = imported
         print(f"Activity sync complete: {imported} imported, {skipped} skipped")
         if errors:
             for err in errors:
@@ -91,6 +101,7 @@ def run_sync():
         importer = HevyActivityImporter(db, athlete_id)
         imported, skipped, errors = importer.import_workouts(start_date, end_date)
         results["hevy"] = f"{imported} imported, {skipped} skipped"
+        results["hevy_imported"] = imported
         print(f"Hevy sync complete: {imported} imported, {skipped} skipped")
         if errors:
             for err in errors:
@@ -110,6 +121,46 @@ def run_sync():
             print(f"{w.date}: TR={w.training_readiness_score}, Sleep={w.sleep_score}, BB={w.body_battery_high}/{w.body_battery_low}, Stress={w.avg_stress_level}, Steps={w.steps}")
     else:
         print("No wellness data found.")
+
+    # Persist to CronLog
+    try:
+        duration = time.time() - start_time
+        total_imported = (
+            results["garmin_wellness_imported"] +
+            results["garmin_activities_imported"] +
+            results["hevy_imported"]
+        )
+
+        # Determine status
+        if not results["errors"]:
+            status = "success"
+        elif total_imported > 0:
+            status = "partial"
+        else:
+            status = "failed"
+
+        log_entry = CronLog(
+            run_date=get_eastern_now().replace(tzinfo=None),
+            job_type="manual_sync",
+            status=status,
+            garmin_activities_imported=results["garmin_activities_imported"],
+            garmin_wellness_imported=results["garmin_wellness_imported"],
+            hevy_imported=results["hevy_imported"],
+            errors_json=json.dumps(results["errors"]) if results["errors"] else None,
+            results_json=json.dumps({
+                "garmin_wellness": results["garmin_wellness"],
+                "garmin_activities": results["garmin_activities"],
+                "hevy": results["hevy"],
+                "errors": results["errors"]
+            }),
+            duration_seconds=round(duration, 2)
+        )
+        db.add(log_entry)
+        db.commit()
+        print(f"\n✓ Logged sync to CronLog (status: {status}, duration: {duration:.2f}s)")
+    except Exception as log_error:
+        print(f"\n✗ Failed to persist CronLog: {log_error}")
+        db.rollback()
 
     db.close()
 
