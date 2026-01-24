@@ -10,12 +10,16 @@ Syncs:
 """
 
 import os
+import json
+import sys
+import time
 from datetime import date
 from fastapi import APIRouter, HTTPException, Header, Request
 from typing import Optional
 
-from api.timezone import get_eastern_today
+from api.timezone import get_eastern_today, get_eastern_now
 from database.base import SessionLocal
+from database.models import CronLog
 from integrations.garmin.activity_importer import GarminActivityImporter
 from integrations.garmin.wellness_importer import GarminWellnessImporter
 from integrations.hevy.activity_importer import HevyActivityImporter
@@ -82,6 +86,8 @@ async def cron_sync(
     }
 
     try:
+        start_time = time.time()
+
         # Sync Garmin activities
         try:
             garmin = GarminActivityImporter(db, athlete_id)
@@ -165,6 +171,36 @@ async def cron_sync(
             "status": "completed" if not results["errors"] else "completed_with_errors"
         }
 
+        # Persist to CronLog
+        try:
+            duration = time.time() - start_time
+
+            # Determine status
+            if not results["errors"]:
+                status = "success"
+            elif total_imported > 0:
+                status = "partial"
+            else:
+                status = "failed"
+
+            log_entry = CronLog(
+                run_date=get_eastern_now(),
+                job_type="sync",
+                status=status,
+                garmin_activities_imported=results["garmin_activities"]["imported"] if results["garmin_activities"] else 0,
+                garmin_wellness_imported=results["garmin_wellness"]["imported"] if results["garmin_wellness"] else 0,
+                hevy_imported=results["hevy"]["imported"] if results["hevy"] else 0,
+                errors_json=json.dumps(results["errors"]) if results["errors"] else None,
+                results_json=json.dumps(results),
+                duration_seconds=round(duration, 2)
+            )
+            db.add(log_entry)
+            db.commit()
+        except Exception as log_error:
+            # Don't let logging failures break sync
+            print(f"Failed to persist CronLog: {log_error}", file=sys.stderr)
+            db.rollback()
+
         return results
 
     finally:
@@ -174,11 +210,38 @@ async def cron_sync(
 @router.get("/sync/status")
 async def cron_status():
     """
-    Simple status check for the cron endpoint.
-    Returns basic info without requiring authentication.
+    Cron status with last run information.
+    Shows when sync last ran and whether it succeeded.
     """
-    return {
-        "endpoint": "/api/cron/sync",
-        "schedule": "0 5 * * * (5:00 UTC daily)",
-        "status": "configured"
-    }
+    db = SessionLocal()
+    try:
+        last_run = db.query(CronLog).filter(
+            CronLog.job_type == "sync"
+        ).order_by(CronLog.run_date.desc()).first()
+
+        base_status = {
+            "endpoint": "/api/cron/sync",
+            "schedule": "0 5 * * * (5:00 UTC daily)",
+            "status": "configured"
+        }
+
+        if not last_run:
+            base_status["last_run"] = None
+            return base_status
+
+        hours_since = (get_eastern_now() - last_run.run_date).total_seconds() / 3600
+
+        base_status["last_run"] = {
+            "date": last_run.run_date.isoformat(),
+            "status": last_run.status,
+            "hours_ago": round(hours_since, 1),
+            "activities_imported": last_run.garmin_activities_imported,
+            "wellness_imported": last_run.garmin_wellness_imported,
+            "hevy_imported": last_run.hevy_imported,
+            "duration_seconds": last_run.duration_seconds,
+            "errors": json.loads(last_run.errors_json) if last_run.errors_json else []
+        }
+
+        return base_status
+    finally:
+        db.close()

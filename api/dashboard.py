@@ -6,6 +6,7 @@ Uses Material Design-inspired components for consistent styling.
 import json
 from datetime import date, datetime, timedelta
 from collections import defaultdict
+from typing import Optional
 
 from api.design_system import wrap_page, get_stat_card, get_progress_card
 from api.timezone import get_eastern_now, get_eastern_today
@@ -16,13 +17,44 @@ _get_eastern_now = get_eastern_now
 _get_eastern_today = get_eastern_today
 
 
+def _get_sync_status_html(last_sync) -> str:
+    """Generate sync status with staleness indicator."""
+    if not last_sync:
+        return '<span style="color: var(--md-warning);">⚠ Never synced</span>'
+
+    now = _get_eastern_now()
+    sync_time = last_sync.run_date
+    hours_ago = (now - sync_time).total_seconds() / 3600
+
+    # Staleness thresholds
+    if hours_ago < 26:  # Within ~1 day
+        color = "var(--md-success)"
+        icon = "✓"
+    elif hours_ago < 50:  # 2 days
+        color = "var(--md-warning)"
+        icon = "⚠"
+    else:  # 3+ days
+        color = "var(--md-error)"
+        icon = "✗"
+
+    time_str = sync_time.strftime('%b %d at %I:%M %p')
+    status_label = f"({last_sync.status.title()})" if last_sync.status != "success" else ""
+
+    return f'<span style="color: {color};">{icon} Last sync: {time_str} {status_label}</span>'
+
+
 def generate_dashboard_html(db):
     """Generate comprehensive fitness dashboard HTML with Material Design styling."""
-    from database.models import CompletedActivity, Athlete, DailyWellness
+    from database.models import CompletedActivity, Athlete, DailyWellness, CronLog
     from datetime import date as date_type
 
     # Get athlete info
     athlete = db.query(Athlete).first()
+
+    # Get last sync time from CronLog
+    last_sync = db.query(CronLog).filter(
+        CronLog.job_type == "sync"
+    ).order_by(CronLog.run_date.desc()).first()
 
     # Get latest wellness data (today or most recent)
     # Handle case where daily_wellness table doesn't exist yet
@@ -124,11 +156,13 @@ def generate_dashboard_html(db):
     </div>
     '''
 
+    sync_status = _get_sync_status_html(last_sync)
+
     content = f'''
     <header class="mb-6" style="display: flex; justify-content: space-between; align-items: flex-start;">
         <div>
             <h1 class="md-headline-large mb-2">Training Dashboard</h1>
-            <p class="md-body-large text-secondary">{athlete_name} · Updated {_get_eastern_now().strftime('%B %d, %Y at %I:%M %p')}</p>
+            <p class="md-body-large text-secondary">{athlete_name} · {sync_status}</p>
         </div>
         <button id="sync-btn" class="sync-btn" onclick="runSync()" title="Sync data from Garmin & Hevy">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
