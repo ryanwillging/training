@@ -184,15 +184,19 @@ class handler(BaseHTTPRequestHandler):
             if db:
                 try:
                     from database.models import CronLog
+                    from api.timezone import get_eastern_now
                     last_run = db.query(CronLog).order_by(CronLog.run_date.desc()).first()
                     if last_run:
+                        # Use timezone-naive datetime for comparison (database stores naive datetimes)
+                        hours_since = (get_eastern_now().replace(tzinfo=None) - last_run.run_date).total_seconds() / 3600
                         status_info["last_run"] = {
                             "date": last_run.run_date.isoformat() if last_run.run_date else None,
                             "status": last_run.status,
+                            "hours_ago": round(hours_since, 1),
+                            "activities_imported": last_run.garmin_activities_imported,
+                            "wellness_imported": last_run.garmin_wellness_imported,
+                            "hevy_imported": last_run.hevy_imported,
                             "duration_seconds": last_run.duration_seconds,
-                            "garmin_activities": last_run.garmin_activities_imported,
-                            "garmin_wellness": last_run.garmin_wellness_imported,
-                            "hevy": last_run.hevy_imported,
                             "errors": json.loads(last_run.errors_json) if last_run.errors_json else []
                         }
                     db.close()
