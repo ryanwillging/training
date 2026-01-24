@@ -172,6 +172,39 @@ async def sync_to_garmin(request: Optional[GarminSyncRequest] = None):
         db.close()
 
 
+@router.post("/scan-formats")
+async def scan_workout_formats(days_ahead: int = 14):
+    """
+    Scan all scheduled workouts and fix any that have incorrect Garmin format.
+
+    This verifies that strength workouts use proper RepeatGroupDTO structure
+    with reps conditions, and fixes any that use outdated lap.button format.
+
+    Args:
+        days_ahead: How many days ahead to scan (default 14)
+
+    Returns:
+        Scan results showing which workouts were fixed/failed
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    db = SessionLocal()
+
+    try:
+        manager = TrainingPlanManager(db, athlete_id)
+
+        if not manager.get_plan_start_date():
+            raise HTTPException(
+                status_code=400,
+                detail="Plan not initialized. Call /plan/initialize first."
+            )
+
+        results = manager.scan_and_fix_workout_formats(days_ahead=days_ahead)
+        return results
+
+    finally:
+        db.close()
+
+
 @router.post("/evaluate")
 async def run_evaluation():
     """

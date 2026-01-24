@@ -129,6 +129,11 @@ Vercel auto-generates `uv.lock` during build. Use `requirements.txt` for local d
 - `/api/plan/week` - Current week summary
 - `/api/plan/week/{number}` - Specific week summary
 - `/api/plan/sync-garmin` - Sync workouts to Garmin (POST)
+  - Also scans and fixes any workouts with outdated format
+- `/api/plan/scan-formats` - Scan and fix workout formats (POST)
+  - Query param: `days_ahead` (default 14)
+  - Verifies Garmin workouts use correct format (RepeatGroupDTO, reps conditions)
+  - Automatically deletes and recreates any with outdated format
 - `/api/plan/evaluate` - Run AI evaluation (POST)
 - `/api/plan/upcoming` - Upcoming scheduled workouts
 
@@ -206,7 +211,7 @@ Data sources:
 
 ### Authentication
 - Uses `garth` library for OAuth token management
-- Tokens cached in `~/.garmin_tokens/`
+- Tokens cached in `~/.garth/`
 - Re-authenticate if tokens expire: `garth.login(email, password)` then `garth.save(path)`
 
 ### API Endpoints Used
@@ -226,6 +231,156 @@ Data sources:
 - Swimming: sportTypeId 4
 - Strength Training: sportTypeId 5
 - Running: sportTypeId 1
+
+### Parsing Helpers (`workout_manager.py`)
+
+| Function | Input Example | Returns |
+|----------|---------------|---------|
+| `parse_sets_string()` | `"4×50"`, `"3×8-10"` | `(reps, value, unit)` |
+| `parse_sets_and_reps()` | `"3×8-10"` | `(num_sets, reps_per_set)` |
+| `parse_strides_string()` | `"4×20s"`, `"3-4×15-20s"` | `(num_strides, duration_secs)` |
+| `parse_rest_string()` | `"20s"`, `"15-20s"`, `"2 min"` | `seconds` |
+| `parse_duration_string()` | `"5 min"`, `"30s"`, `"5-8 min"` | `seconds` |
+| `parse_distance_string()` | `"300 yards"`, `"200y"` | `yards` |
+
+### Workout Details Field Convention
+
+When defining exercises in `_get_vo2_workout_details()`, `_get_lift_workout_details()`, etc., use these field names to control Garmin step creation:
+
+| Field | Creates | conditionTypeId | Use For |
+|-------|---------|-----------------|---------|
+| `duration` | ExecutableStepDTO | 2 (time) | Warmup, cooldown, timed activities |
+| `sets` | RepeatGroupDTO | 10 (reps) | Strength exercises (e.g., "3×8-10") |
+| `strides` | RepeatGroupDTO | 2 (time) | Time-based intervals (e.g., "4×20s") |
+| `distance` | ExecutableStepDTO | 3 (distance) | Swim distances, runs |
+
+**Priority**: If multiple fields are present, `strides` takes precedence, then `duration`, then `sets`.
+
+### Workout Payload Structure
+
+Workouts are created via `POST /workout-service/workout` with this structure:
+
+```python
+{
+    "sportType": {"sportTypeId": 5, "sportTypeKey": "strength_training"},
+    "workoutName": "Lift A - Lower Body",
+    "description": "Optional description",
+    "workoutSegments": [
+        {
+            "segmentOrder": 1,
+            "sportType": {"sportTypeId": 5, "sportTypeKey": "strength_training"},
+            "workoutSteps": [
+                # ExecutableStepDTO or RepeatGroupDTO items
+            ]
+        }
+    ]
+}
+```
+
+**Step Types**:
+- `ExecutableStepDTO`: Single exercise step (warmup, interval, cooldown, rest)
+- `RepeatGroupDTO`: Repeating group for sets (contains child steps)
+
+**End Condition Types** (`conditionTypeId`):
+| ID | Key | Use Case |
+|----|-----|----------|
+| 1 | `lap.button` | Manual lap/stop |
+| 2 | `time` | Duration-based (seconds) |
+| 3 | `distance` | Distance-based (meters) |
+| 10 | `reps` | Rep-based (strength training) |
+
+### Strength Workout Structure (RepeatGroupDTO)
+
+Strength exercises with sets use `RepeatGroupDTO` to create rounds:
+
+```python
+# Example: Squat 3×8 reps
+{
+    "type": "RepeatGroupDTO",
+    "stepOrder": 1,
+    "numberOfIterations": 3,  # Number of sets
+    "smartRepeat": False,
+    "childSteps": [
+        {
+            "type": "ExecutableStepDTO",
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+            "exerciseCategory": {"exerciseCategoryId": 119, "exerciseName": "SQUAT"},
+            "endCondition": {"conditionTypeId": 10, "conditionTypeKey": "reps"},
+            "endConditionValue": 8.0  # Reps per set
+        }
+    ],
+    "repeatGroupDescription": {"value": "3 sets of 8 reps"}
+}
+```
+
+**Key Points**:
+- `numberOfIterations` = number of sets
+- Child step's `endConditionValue` = reps per set
+- Use `conditionTypeId: 10` for reps (not time or lap.button)
+- The `parse_sets_and_reps()` helper in `workout_manager.py` extracts sets and reps from strings like "3×8-10"
+
+### VO2 Workout Strides (RepeatGroupDTO)
+
+Strides in VO2 warmups use `RepeatGroupDTO` with time-based intervals:
+
+```python
+# In _get_vo2_workout_details():
+{"name": "Strides/pickups", "strides": "4×20s", "recovery": "45s", "notes": "Build to fast pace"}
+
+# Creates this Garmin structure:
+{
+    "type": "RepeatGroupDTO",
+    "stepOrder": 3,
+    "numberOfIterations": 4,  # Number of strides
+    "workoutSteps": [
+        {
+            "type": "ExecutableStepDTO",
+            "stepOrder": 1,
+            "stepType": {"stepTypeId": 3, "stepTypeKey": "interval"},
+            "description": "Stride (20s)",
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": 20.0  # Duration in seconds
+        },
+        {
+            "type": "ExecutableStepDTO",
+            "stepOrder": 2,
+            "stepType": {"stepTypeId": 4, "stepTypeKey": "recovery"},
+            "description": "Walk-back recovery",
+            "endCondition": {"conditionTypeId": 2, "conditionTypeKey": "time"},
+            "endConditionValue": 45.0  # Recovery in seconds
+        }
+    ]
+}
+```
+
+**Strides Field Format**:
+- `strides`: `"N×Ds"` where N=repetitions, D=duration in seconds (e.g., "4×20s")
+- `recovery`: Rest time between strides (default 45s for walk-back)
+- Ranges supported: "3-4×15-20s" (uses average values)
+
+**Key Points**:
+- Use `strides` field (NOT `duration` or `sets`) for repetition-based warmup exercises
+- Child steps use `conditionTypeId: 2` (time), not `1` (lap.button) or `10` (reps)
+- The `parse_strides_string()` helper in `workout_manager.py` extracts strides and duration
+- `_strides_to_garmin_steps()` creates the RepeatGroupDTO structure
+
+### Automatic Format Verification
+
+The system automatically scans and fixes outdated workout formats:
+
+- **When it runs**: After every Garmin sync or workout modification
+- **What it checks**:
+  - Strength workouts: Use RepeatGroupDTO with reps (not lap.button)
+  - VO2 workouts: Warmup/cooldown steps have time (not lap.button); strides are RepeatGroupDTO
+- **What it does**: Deletes and recreates any workouts with incorrect format
+- **Manual trigger**: `POST /api/plan/scan-formats?days_ahead=14`
+
+The `verify_workout_format()` method in `workout_manager.py` fetches a workout from Garmin and checks:
+1. **Strength**: Exercises use `conditionTypeId: 10` (reps), not `1` (lap.button)
+2. **Strength**: Sets are structured as RepeatGroupDTO, not flat ExecutableStepDTO
+3. **VO2**: Warmup/cooldown/other steps use `conditionTypeId: 2` (time), not `1` (lap.button)
+4. **VO2**: Strides are RepeatGroupDTO with time-based child steps, not flat ExecutableStepDTO
 
 ### Local Garmin Sync (Required for Calendar Updates)
 
@@ -309,7 +464,12 @@ db.close()
 EOF
 ```
 
-**Note:** Creating NEW workouts via API is complex (requires specific JSON structure). The current approach is to delete modified workouts from Garmin calendar, allowing the user to do lighter/modified versions without a prescribed workout.
+**Note:** Workout creation is fully implemented in `workout_manager.py`. Supports:
+- **Swim workouts**: Intervals with distance/time targets
+- **Strength workouts**: Uses RepeatGroupDTO for sets with rep targets (see "Strength Workout Structure" above)
+- **VO2/cardio sessions**: Running, rowing, cycling with interval structure
+
+For modifications that change workout structure, the system deletes the old workout and creates a new one with the updated format.
 
 ## Goal Analysis
 The AI evaluation pipeline (`chatgpt_evaluator.py`) is the primary system for goal analysis and recommendations. Rule-based analysis modules were consolidated into the unified AI evaluation.

@@ -163,6 +163,43 @@ class GarminWorkoutManager:
         return None, None, None
 
     @staticmethod
+    def parse_strides_string(strides_str: str) -> Tuple[Optional[int], Optional[float]]:
+        """
+        Parse a strides string like "4×20s" or "3-4×15-20s".
+
+        For ranges (like "3-4" or "15-20"), uses the average value.
+
+        Args:
+            strides_str: Strides string like "4×20s" or "3-4×15-20s"
+
+        Returns:
+            Tuple of (num_strides, duration_seconds), or (None, None) if cannot parse
+        """
+        if not strides_str:
+            return None, None
+
+        # Match patterns like "4×20s", "3-4×15-20s", "4x20sec"
+        match = re.match(
+            r'(\d+)(?:-(\d+))?[×x](\d+)(?:-(\d+))?\s*(s|sec|seconds?)?',
+            strides_str,
+            re.IGNORECASE
+        )
+        if match:
+            # Parse number of strides (handle range)
+            strides_low = int(match.group(1))
+            strides_high = int(match.group(2)) if match.group(2) else strides_low
+            num_strides = int((strides_low + strides_high) / 2)
+
+            # Parse duration (handle range)
+            duration_low = int(match.group(3))
+            duration_high = int(match.group(4)) if match.group(4) else duration_low
+            duration_secs = (duration_low + duration_high) / 2
+
+            return num_strides, duration_secs
+
+        return None, None
+
+    @staticmethod
     def parse_rest_string(rest_str: str) -> Optional[float]:
         """
         Parse a rest string like "15-20s" or "20s" or "2 min" or "45-60s".
@@ -897,6 +934,67 @@ class GarminWorkoutManager:
 
         return workout_json
 
+    def _strides_to_garmin_steps(
+        self,
+        strides_str: str,
+        step_order: int,
+        recovery_seconds: float = 45.0,
+        description: str = "Strides"
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Convert strides string to Garmin RepeatGroupDTO with time-based intervals.
+
+        Strides (e.g., "4×20s") become a repeat group where each iteration is:
+        - A short interval (the stride itself)
+        - A recovery period (walk-back)
+
+        Args:
+            strides_str: Strides string like "4×20s" or "3-4×15-20s"
+            step_order: Starting step order number
+            recovery_seconds: Recovery time between strides (default 45s for walk-back)
+            description: Description for the repeat group
+
+        Returns:
+            Tuple of (list of steps, next step order)
+        """
+        num_strides, duration_secs = self.parse_strides_string(strides_str)
+
+        if not num_strides or not duration_secs:
+            # Fallback: return empty list if can't parse
+            return [], step_order
+
+        # Create child steps for the repeat group
+        child_steps = []
+
+        # Stride interval (time-based)
+        stride_step = self._create_cardio_interval_step(
+            duration_seconds=duration_secs,
+            step_order=1,
+            step_type="interval",
+            description=f"Stride ({int(duration_secs)}s)"
+        )
+        child_steps.append(stride_step)
+
+        # Recovery step (walk-back)
+        recovery_step = self._create_cardio_interval_step(
+            duration_seconds=recovery_seconds,
+            step_order=2,
+            step_type="recovery",
+            description="Walk-back recovery"
+        )
+        child_steps.append(recovery_step)
+
+        # Create repeat group
+        group_desc = f"{num_strides}×{int(duration_secs)}s {description}"
+        repeat_group = self._create_repeat_group(
+            iterations=num_strides,
+            child_steps=child_steps,
+            step_order=step_order,
+            description=group_desc
+        )
+
+        return [repeat_group], step_order + 1
+
     def _create_cardio_interval_step(
         self,
         duration_seconds: float,
@@ -980,7 +1078,21 @@ class GarminWorkoutManager:
         warmup_exercises = workout_details.get("warmup", [])
         for exercise in warmup_exercises:
             duration = exercise.get("duration")
-            if duration:
+            strides = exercise.get("strides")
+
+            if strides:
+                # Strides as RepeatGroupDTO with time-based intervals
+                # e.g., "4×20s" becomes 4 iterations of (20s interval + 45s recovery)
+                recovery = exercise.get("recovery")
+                recovery_secs = self.parse_rest_string(recovery) if recovery else 45.0
+                new_steps, step_order = self._strides_to_garmin_steps(
+                    strides_str=strides,
+                    step_order=step_order,
+                    recovery_seconds=recovery_secs,
+                    description=exercise.get("name", "Strides")
+                )
+                garmin_steps.extend(new_steps)
+            elif duration:
                 duration_secs = self.parse_duration_string(duration)
                 if duration_secs:
                     step = self._create_cardio_interval_step(
@@ -991,18 +1103,8 @@ class GarminWorkoutManager:
                     )
                     garmin_steps.append(step)
                     step_order += 1
-            elif exercise.get("sets"):
-                # Strides like "3-4×15-20s"
-                step = self._create_strength_step(
-                    exercise_name=exercise.get("name", "Strides"),
-                    step_order=step_order,
-                    step_type="other",
-                    sets=exercise.get("sets")
-                )
-                garmin_steps.append(step)
-                step_order += 1
             else:
-                # Generic step
+                # Generic step with lap button - avoid this by providing duration or strides
                 step = self._create_strength_step(
                     exercise_name=exercise.get("name", "Warmup"),
                     step_order=step_order,
@@ -1611,6 +1713,120 @@ class GarminWorkoutManager:
         except Exception as e:
             print(f"✗ Error getting workout {workout_id}: {e}")
             return None
+
+    def verify_workout_format(self, workout_id: str, workout_type: str) -> Dict[str, Any]:
+        """
+        Verify that a Garmin workout has the correct format.
+
+        For strength workouts, checks that:
+        - Exercises with sets use RepeatGroupDTO (not flat steps)
+        - Steps use reps condition (conditionTypeId: 10), not lap.button
+
+        Args:
+            workout_id: Garmin workout ID
+            workout_type: Type of workout (lift_a, lift_b, swim_a, etc.)
+
+        Returns:
+            Dict with keys:
+            - is_valid: bool - True if format is correct
+            - issues: List[str] - List of format issues found
+            - needs_recreation: bool - True if workout should be deleted and recreated
+        """
+        result = {
+            "is_valid": True,
+            "issues": [],
+            "needs_recreation": False
+        }
+
+        workout = self.get_workout(workout_id)
+        if not workout:
+            result["is_valid"] = False
+            result["issues"].append("Workout not found in Garmin")
+            result["needs_recreation"] = True
+            return result
+
+        # Check strength workouts for proper format
+        if workout_type in ["lift_a", "lift_b"]:
+            segments = workout.get("workoutSegments", [])
+            for segment in segments:
+                steps = segment.get("workoutSteps", [])
+                for step in steps:
+                    step_type = step.get("type", "")
+
+                    # Check for flat ExecutableStepDTO that should be RepeatGroupDTO
+                    if step_type == "ExecutableStepDTO":
+                        end_condition = step.get("endCondition", {})
+                        condition_key = end_condition.get("conditionTypeKey", "")
+
+                        # If it's using lap.button for a strength exercise, it's wrong
+                        if condition_key == "lap.button":
+                            step_desc = step.get("stepDescription", {}).get("value", "Unknown")
+                            result["issues"].append(
+                                f"Step '{step_desc}' uses lap.button instead of reps"
+                            )
+                            result["needs_recreation"] = True
+
+                    # Check RepeatGroupDTO has proper inner steps
+                    elif step_type == "RepeatGroupDTO":
+                        child_steps = step.get("childSteps", [])
+                        for child in child_steps:
+                            end_condition = child.get("endCondition", {})
+                            condition_key = end_condition.get("conditionTypeKey", "")
+                            if condition_key == "lap.button":
+                                result["issues"].append(
+                                    f"RepeatGroup child step uses lap.button instead of reps"
+                                )
+                                result["needs_recreation"] = True
+
+        # Check VO2 workouts - warmup/cooldown should have time, not lap.button
+        # Strides should be RepeatGroupDTO with time-based child steps
+        elif workout_type == "vo2":
+            segments = workout.get("workoutSegments", [])
+            for segment in segments:
+                steps = segment.get("workoutSteps", [])
+                for step in steps:
+                    step_type = step.get("type", "")
+
+                    if step_type == "ExecutableStepDTO":
+                        end_condition = step.get("endCondition", {})
+                        condition_key = end_condition.get("conditionTypeKey", "")
+                        step_type_key = step.get("stepType", {}).get("stepTypeKey", "")
+                        description = step.get("description", "").lower()
+
+                        # Warmup/cooldown/other steps should have time, not lap.button
+                        if condition_key == "lap.button" and step_type_key in ["warmup", "cooldown", "other"]:
+                            step_desc = step.get("description", "Unknown")
+                            result["issues"].append(
+                                f"VO2 step '{step_desc}' uses lap.button instead of time"
+                            )
+                            result["needs_recreation"] = True
+
+                        # Strides should be RepeatGroupDTO, not flat ExecutableStepDTO
+                        if "stride" in description or "pickup" in description:
+                            result["issues"].append(
+                                f"VO2 strides should be RepeatGroupDTO, not flat step"
+                            )
+                            result["needs_recreation"] = True
+
+                    # Check RepeatGroupDTO (strides) has proper time-based child steps
+                    elif step_type == "RepeatGroupDTO":
+                        description = step.get("description", "").lower()
+                        # For strides, child steps should have time condition, not lap.button
+                        if "stride" in description or "pickup" in description:
+                            child_steps = step.get("workoutSteps", [])
+                            for child in child_steps:
+                                child_condition = child.get("endCondition", {})
+                                child_condition_key = child_condition.get("conditionTypeKey", "")
+                                if child_condition_key == "lap.button":
+                                    result["issues"].append(
+                                        f"Strides RepeatGroup child uses lap.button instead of time"
+                                    )
+                                    result["needs_recreation"] = True
+
+        if result["issues"]:
+            result["is_valid"] = False
+
+        return result
 
     def delete_workout(self, workout_id: str) -> bool:
         """

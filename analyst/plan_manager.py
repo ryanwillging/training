@@ -239,6 +239,13 @@ class TrainingPlanManager:
                     "error": str(e)
                 })
 
+        # After syncing new workouts, scan ALL existing workouts for format issues
+        try:
+            scan_results = self.scan_and_fix_workout_formats(days_ahead=days_ahead)
+            results["format_scan"] = scan_results
+        except Exception as e:
+            results["format_scan"] = {"error": str(e)}
+
         return results
 
     def _upload_and_schedule_garmin_workout(
@@ -453,8 +460,11 @@ class TrainingPlanManager:
         return {
             "warmup": [
                 {"name": "Easy jog/row/spin", "duration": "8-10 min"},
-                {"name": "Dynamic stretches"},
-                {"name": "Strides or pickups", "sets": "3-4×15-20s"}
+                {"name": "Dynamic stretches", "duration": "3 min", "notes": "Leg swings, hip circles, arm circles"},
+                # Strides use "strides" field for RepeatGroupDTO with time-based intervals
+                # Format: "N×Ds" where N=repetitions, D=duration in seconds
+                # Recovery defaults to 45s walk-back if not specified
+                {"name": "Strides/pickups", "strides": "4×20s", "recovery": "45s", "notes": "Build to fast pace"}
             ],
             "main": [
                 {"name": "Intervals", "description": main_set}
@@ -1126,6 +1136,123 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
                     "reason": str(e)
                 })
 
+        # After applying modifications, scan all workouts for format mismatches
+        if sync_to_garmin and GARMIN_AVAILABLE:
+            try:
+                scan_results = self.scan_and_fix_workout_formats()
+                results["format_scan"] = scan_results
+            except Exception as e:
+                results["format_scan"] = {"error": str(e)}
+
+        return results
+
+    def scan_and_fix_workout_formats(self, days_ahead: int = 14) -> Dict[str, Any]:
+        """
+        Scan all scheduled workouts and fix any that have incorrect Garmin format.
+
+        This checks each workout that has been synced to Garmin and verifies:
+        - Strength workouts use RepeatGroupDTO for sets with reps conditions
+        - Workouts don't use lap.button for exercises that should have reps
+
+        If a mismatch is found, the workout is deleted and recreated with the correct format.
+
+        Args:
+            days_ahead: How many days ahead to scan (default 14)
+
+        Returns:
+            Dict with scan results including fixed, skipped, and errors
+        """
+        results = {
+            "scanned": 0,
+            "valid": 0,
+            "fixed": [],
+            "failed": [],
+            "not_found": []
+        }
+
+        if not GARMIN_AVAILABLE or self.garmin_manager is None:
+            results["error"] = "Garmin integration not available"
+            return results
+
+        # Get all upcoming scheduled workouts with Garmin IDs
+        today = date.today()
+        end_date = today + timedelta(days=days_ahead)
+
+        workouts = self.db.query(ScheduledWorkout).filter(
+            ScheduledWorkout.athlete_id == self.athlete_id,
+            ScheduledWorkout.scheduled_date >= today,
+            ScheduledWorkout.scheduled_date <= end_date,
+            ScheduledWorkout.garmin_workout_id.isnot(None),
+            ScheduledWorkout.status != "skipped"
+        ).all()
+
+        for workout in workouts:
+            results["scanned"] += 1
+
+            try:
+                # Verify the format
+                verification = self.garmin_manager.verify_workout_format(
+                    workout.garmin_workout_id,
+                    workout.workout_type
+                )
+
+                if verification["is_valid"]:
+                    results["valid"] += 1
+                elif verification["needs_recreation"]:
+                    # Delete and recreate the workout
+                    print(f"⚠ Fixing format for {workout.workout_type} on {workout.scheduled_date}")
+                    print(f"  Issues: {verification['issues']}")
+
+                    old_id = workout.garmin_workout_id
+
+                    # Delete the old workout
+                    self.garmin_manager.delete_workout(old_id)
+
+                    # Create new workout with correct format
+                    garmin_workout = self._create_garmin_workout(workout)
+                    if garmin_workout:
+                        new_id, success = self._upload_and_schedule_garmin_workout(
+                            garmin_workout,
+                            workout.scheduled_date
+                        )
+
+                        if new_id:
+                            workout.garmin_workout_id = new_id
+                            workout.garmin_calendar_date = workout.scheduled_date
+                            self.db.commit()
+
+                            results["fixed"].append({
+                                "date": workout.scheduled_date.isoformat(),
+                                "type": workout.workout_type,
+                                "old_id": old_id,
+                                "new_id": new_id,
+                                "issues_fixed": verification["issues"]
+                            })
+                            print(f"  ✓ Fixed: new workout ID {new_id}")
+                        else:
+                            results["failed"].append({
+                                "date": workout.scheduled_date.isoformat(),
+                                "type": workout.workout_type,
+                                "error": "Failed to create new workout"
+                            })
+                    else:
+                        results["failed"].append({
+                            "date": workout.scheduled_date.isoformat(),
+                            "type": workout.workout_type,
+                            "error": "Could not generate Garmin workout format"
+                        })
+                else:
+                    # Has issues but doesn't need recreation (shouldn't happen normally)
+                    results["valid"] += 1
+
+            except Exception as e:
+                results["failed"].append({
+                    "date": workout.scheduled_date.isoformat(),
+                    "type": workout.workout_type,
+                    "error": str(e)
+                })
+
+        print(f"\n📊 Format scan complete: {results['scanned']} scanned, {results['valid']} valid, {len(results['fixed'])} fixed")
         return results
 
     def get_weekly_summary(self, week_number: Optional[int] = None) -> Dict[str, Any]:
