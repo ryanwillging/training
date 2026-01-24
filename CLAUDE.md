@@ -520,7 +520,7 @@ python scripts/run_sync.py
 
 ### Training Plan Structure
 - **24 weeks**, 3 phases + taper
-- **Plan Start Date**: January 20, 2025 (fixed anchor)
+- **Plan Start Date**: January 20, 2025 (historical anchor - week numbers calculated from this date)
 - **Test weeks**: 2, 12, 24 (400 TT)
 - **Weekly cadence**:
   - Mon: Swim A (Threshold/CSS)
@@ -646,7 +646,33 @@ git push origin <branch>
 ```
 **Important**:
 - Commit working changes frequently. Don't let local drift from the repository.
-- After merging a branch to main, delete the feature branch locally and remotely.
+- After merging a branch to main, delete the feature branch:
+  - If branch has a worktree: `git worktree remove <path> && git branch -D <branch>`
+  - Otherwise: `git push origin --delete <branch> && git branch -D <branch>`
+
+## Git Worktrees
+
+This project uses git worktrees for parallel development. Each worktree has a different branch checked out:
+
+| Worktree Path | Branch |
+|---------------|--------|
+| `/Users/ryanwillging/claude projects/training` | `main` |
+| `/Users/ryanwillging/conductor/workspaces/training/<city>` | Feature branches |
+
+### Working with Worktrees
+```bash
+# List all worktrees
+git worktree list
+
+# Cannot checkout main from feature worktree (use main worktree instead)
+cd "/Users/ryanwillging/claude projects/training" && git merge origin/<branch>
+
+# Remove a worktree before deleting its branch
+git worktree remove /path/to/worktree
+git branch -D branch-name
+```
+
+**Important**: You cannot checkout a branch that's already in use by another worktree. To merge to main, cd to the main worktree first.
 
 ## CI/CD
 
