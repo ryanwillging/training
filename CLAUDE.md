@@ -99,6 +99,64 @@ dependencies = [
 ```
 Vercel auto-generates `uv.lock` during build. Use `requirements.txt` for local development only.
 
+## Sync Architecture
+
+### Automated Sync via GitHub Actions
+The system runs daily syncs at 5:00 UTC using GitHub Actions (see `.github/workflows/daily-sync.yml`):
+
+**How it works:**
+- GitHub Actions cron triggers daily at 5:00 UTC
+- Runs `python scripts/run_sync.py` with full package access
+- Writes to production Neon PostgreSQL database
+- Creates CronLog entry with job_type="github_actions"
+- Can be manually triggered from GitHub Actions UI
+
+**Setup:** See `.github/SETUP.md` for configuring GitHub secrets
+
+**Monitoring:**
+- GitHub sends email if workflow fails
+- Check status: `curl https://training.ryanwillging.com/api/cron/sync/status`
+- View logs: https://github.com/ryanwillging/training/actions
+
+### Manual Sync (Local)
+For immediate data updates or testing:
+- Run via `python scripts/run_sync.py`
+- Full access to all Python packages
+- Syncs to production Neon database
+- Creates CronLog entry with job_type="manual_sync"
+
+### Legacy Vercel Cron (Deprecated)
+The Vercel cron at `/api/cron/sync` is still configured but:
+- **CANNOT import data** (missing garminconnect/hevy-api-client in serverless)
+- Creates CronLog entry with status="partial" and import errors
+- Kept for monitoring but not used for actual syncing
+
+### CronLog Tracking
+All sync types persist execution logs to the `cron_logs` table:
+- `job_type`: "github_actions" (automated), "manual_sync" (local), or "sync" (legacy Vercel)
+- `status`: "success", "partial", or "failed"
+- `run_date`: Eastern time (naive datetime)
+- Import counts and error details
+
+Dashboard and status endpoints query for ALL job types to show most recent sync.
+
+## Vercel Serverless Architecture
+
+### Critical Limitation: Package Import Failures
+Vercel's Python serverless runtime **cannot import** `garminconnect` or `hevy-api-client`. This is a permanent limitation, not a configuration issue.
+
+**Implications**:
+1. Nightly cron syncs will ALWAYS show "partial" status with import errors
+2. Dashboard may show stale wellness data until local sync runs
+3. Local `python scripts/run_sync.py` is required for actual data import
+
+### Dual-Handler Pattern
+- **`api/index.py`**: Vercel serverless handler (limited imports)
+- **`api/app.py`**: FastAPI app for local development (full imports)
+- Routes duplicated in both files must stay in sync
+
+When adding new endpoints, update BOTH files.
+
 ## API Endpoints
 
 ### Core
@@ -492,18 +550,21 @@ The 24-week training plan system provides automated workout scheduling, Garmin i
 - Supports: swim (A/B/test), lift (A/B), VO2 sessions
 - Schedules workouts on Garmin calendar
 
-### Nightly Cron Flow
-1. Sync Garmin activities and wellness data
-2. Sync Hevy workouts
-3. **Run unified AI evaluation pipeline**
+### Automated Daily Flow (GitHub Actions)
+The daily sync workflow runs at 5:00 UTC:
+
+1. **Sync Garmin activities and wellness data**
+2. **Sync Hevy workouts**
+3. **Future: Run unified AI evaluation pipeline**
    - Analyzes wellness, workouts, goal progress
    - Generates lifestyle insights (health, recovery, nutrition, sleep)
    - Proposes modifications for next 7 days only (conservative approach)
    - Modifications stored as pending for user review at `/reviews`
    - Evaluation type marked as "nightly"
+   - **Note**: AI evaluation not yet integrated into GitHub Actions workflow
 
-### Cron Logging & Monitoring
-Each cron run is logged to the `CronLog` table with:
+### Sync Logging & Monitoring
+Each sync run is logged to the `CronLog` table with:
 - Timestamp, duration, and status (success/partial/failed)
 - Count of imported activities/wellness/workouts
 - Any errors encountered
@@ -513,9 +574,9 @@ Check last run status:
 curl https://training.ryanwillging.com/api/cron/sync/status
 ```
 
-**Note**: Vercel serverless can't import `garminconnect`/`hevy-api-client`, so cron runs show "partial" status with import errors. Use local sync for full functionality:
+View GitHub Actions history:
 ```bash
-python scripts/run_sync.py
+open https://github.com/ryanwillging/training/actions/workflows/daily-sync.yml
 ```
 
 ### Training Plan Structure
@@ -615,9 +676,9 @@ cp .env.example .env
 # Deploy to production
 vercel deploy --prod
 
-# Trigger manual data sync (production)
-curl "https://training.ryanwillging.com/api/cron/sync" \
-  -H "Authorization: Bearer $CRON_SECRET"
+# Trigger manual data sync via GitHub Actions
+# Go to: https://github.com/ryanwillging/training/actions/workflows/daily-sync.yml
+# Click "Run workflow" → Select "main" → Click "Run workflow"
 
 # Check sync status (production)
 curl https://training.ryanwillging.com/api/cron/sync/status
@@ -625,12 +686,47 @@ curl https://training.ryanwillging.com/api/cron/sync/status
 # Local development server (for testing changes)
 source venv/bin/activate && uvicorn api.app:app --reload
 
-# Local data sync (via API)
-curl -X POST http://localhost:8000/api/import/sync
-
-# Run sync locally against production database (preferred method)
+# Run sync locally against production database
 source venv/bin/activate && python scripts/run_sync.py
 ```
+
+### Manual Sync with CronLog Tracking
+
+When running manual syncs, `scripts/run_sync.py` automatically creates CronLog entries. Pattern to follow for new sync scripts:
+
+```python
+import time
+import json
+from database.models import CronLog
+from api.timezone import get_eastern_now
+
+start_time = time.time()
+
+# ... perform sync operations ...
+
+# Track import counts
+garmin_wellness_imported = 0
+garmin_activities_imported = 0
+hevy_imported = 0
+errors = []
+
+# Create CronLog entry
+log_entry = CronLog(
+    run_date=get_eastern_now().replace(tzinfo=None),  # Remove timezone!
+    job_type="manual_sync",  # or "sync" for automated, "github_actions" for CI
+    status="success",  # or "partial"/"failed"
+    garmin_activities_imported=garmin_activities_imported,
+    garmin_wellness_imported=garmin_wellness_imported,
+    hevy_imported=hevy_imported,
+    errors_json=json.dumps(errors) if errors else None,
+    results_json=json.dumps(results),
+    duration_seconds=round(time.time() - start_time, 2)
+)
+db.add(log_entry)
+db.commit()
+```
+
+Dashboard queries for ALL job types: `CronLog.job_type.in_(["sync", "manual_sync", "github_actions"])`
 
 ## Git Workflow
 Commit changes regularly to keep local and remote in sync:
@@ -770,12 +866,36 @@ def sync_to_garmin(self):
 ```
 This allows the module to load in Vercel while gracefully degrading functionality.
 
+### Virtual Environment Issues
+
+**Bad interpreter error** (`/old/path/to/python3: no such file or directory`):
+```bash
+# Venv has hardcoded absolute paths - recreate it
+cd "/Users/ryanwillging/claude projects/training"
+rm -rf venv
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
+```
+
+**Missing packages after fresh checkout**:
+```bash
+venv/bin/pip install -r requirements.txt
+```
+
+**Verify venv is working**:
+```bash
+venv/bin/python -c "import garminconnect; print('✓ OK')"
+```
+
 ### Checking Logs
 ```bash
 # Vercel function logs
 vercel logs
 
 # Local server shows logs in terminal when running uvicorn
+
+# GitHub Actions workflow logs
+# https://github.com/ryanwillging/training/actions
 ```
 
 ## Architecture
@@ -812,6 +932,23 @@ today = get_eastern_today()  # Instead of date.today()
 now = get_eastern_now()      # Instead of datetime.now()
 ```
 **Never use `date.today()` or `datetime.now()` directly** - Vercel runs in UTC.
+
+### Database Comparison Pattern
+When comparing database timestamps with current time, ALWAYS use:
+
+```python
+from api.timezone import get_eastern_now
+
+# CORRECT - Remove timezone info before comparison
+now = get_eastern_now().replace(tzinfo=None)
+hours_ago = (now - db_record.run_date).total_seconds() / 3600
+
+# WRONG - Will cause "can't subtract offset-naive and offset-aware" error
+now = get_eastern_now()  # This is timezone-aware
+hours_ago = (now - db_record.run_date).total_seconds() / 3600
+```
+
+**Rationale**: Database stores naive datetimes, `get_eastern_now()` returns timezone-aware. Must convert to naive before comparison.
 
 ## Navigation Pages
 All HTML pages are registered in `api/navigation.py` and appear in the nav bar:

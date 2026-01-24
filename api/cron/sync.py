@@ -215,9 +215,9 @@ async def cron_status():
     """
     db = SessionLocal()
     try:
-        # Get most recent sync (automated or manual)
+        # Get most recent sync (automated, manual, or GitHub Actions)
         last_run = db.query(CronLog).filter(
-            CronLog.job_type.in_(["sync", "manual_sync"])
+            CronLog.job_type.in_(["sync", "manual_sync", "github_actions"])
         ).order_by(CronLog.run_date.desc()).first()
 
         base_status = {

@@ -139,9 +139,12 @@ def run_sync():
         else:
             status = "failed"
 
+        # Detect if running in GitHub Actions
+        job_type = "github_actions" if os.environ.get("GITHUB_ACTIONS") == "true" else "manual_sync"
+
         log_entry = CronLog(
             run_date=get_eastern_now().replace(tzinfo=None),
-            job_type="manual_sync",
+            job_type=job_type,
             status=status,
             garmin_activities_imported=results["garmin_activities_imported"],
             garmin_wellness_imported=results["garmin_wellness_imported"],

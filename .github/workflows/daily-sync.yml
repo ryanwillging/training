@@ -1,0 +1,42 @@
+name: Daily Sync
+
+on:
+  schedule:
+    # Run at 5:00 UTC daily (midnight EST)
+    - cron: '0 5 * * *'
+
+  # Allow manual trigger from GitHub Actions UI
+  workflow_dispatch:
+
+jobs:
+  sync-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run sync
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          HEVY_API_KEY: ${{ secrets.HEVY_API_KEY }}
+          ATHLETE_ID: ${{ secrets.ATHLETE_ID }}
+        run: |
+          python scripts/run_sync.py
+
+      - name: Check sync status
+        if: always()
+        run: |
+          echo "Sync completed. Check logs above for results."
