@@ -118,6 +118,42 @@ The system runs daily syncs at 5:00 UTC using GitHub Actions (see `.github/workf
 - Check status: `curl https://training.ryanwillging.com/api/cron/sync/status`
 - View logs: https://github.com/ryanwillging/training/actions
 
+#### Verifying GitHub Actions Setup
+
+After configuring secrets and enabling the workflow:
+
+1. **Trigger first run manually**:
+   - Go to https://github.com/ryanwillging/training/actions/workflows/daily-sync.yml
+   - Click "Run workflow" → Select "main" → Click "Run workflow"
+
+2. **Check workflow execution**:
+   ```bash
+   # Check GitHub Actions logs for errors
+   open https://github.com/ryanwillging/training/actions
+   ```
+
+3. **Verify CronLog was created**:
+   ```bash
+   curl https://training.ryanwillging.com/api/cron/sync/status | jq '.last_run'
+   ```
+   - Should show `job_type: "github_actions"`
+   - Status should be "success" or "partial" (if some imports failed)
+   - Check `hours_ago` is recent (<1 hour)
+
+4. **Verify dashboard updated**:
+   - Visit https://training.ryanwillging.com/dashboard
+   - Header should show "Last sync: [recent timestamp]"
+   - Wellness data should be current (not stale Monday date)
+
+#### First Automated Run
+
+The GitHub Actions cron is scheduled for **5:00 UTC daily** (midnight EST).
+
+**First run timeline**:
+- If you configured secrets on January 24 at 2pm EST, the first automated run will be January 25 at 12:00am EST
+- Until then, dashboard shows the last manual or GitHub Actions sync
+- You can trigger manually anytime from the GitHub Actions UI (see verification steps above)
+
 ### Manual Sync (Local)
 For immediate data updates or testing:
 - Run via `python scripts/run_sync.py`
@@ -125,11 +161,22 @@ For immediate data updates or testing:
 - Syncs to production Neon database
 - Creates CronLog entry with job_type="manual_sync"
 
-### Legacy Vercel Cron (Deprecated)
-The Vercel cron at `/api/cron/sync` is still configured but:
+### Vercel Cron Endpoint (Monitoring Only)
+
+The Vercel cron endpoint at `/api/cron/sync` is still configured and should be **kept for monitoring purposes**:
+
+**Why it's still valuable**:
+- Verifies Vercel deployment is healthy and can reach the database
+- Acts as a fallback status check endpoint
+- Provides a webhook target for external monitoring services
+- Creates CronLog entries that help diagnose deployment issues
+
+**Limitations**:
 - **CANNOT import data** (missing garminconnect/hevy-api-client in serverless)
 - Creates CronLog entry with status="partial" and import errors
-- Kept for monitoring but not used for actual syncing
+- Not used for actual data syncing (GitHub Actions handles that)
+
+**Configuration**: See `vercel.json` cron settings. The endpoint is called daily but doesn't perform imports.
 
 ### CronLog Tracking
 All sync types persist execution logs to the `cron_logs` table:
@@ -139,6 +186,29 @@ All sync types persist execution logs to the `cron_logs` table:
 - Import counts and error details
 
 Dashboard and status endpoints query for ALL job types to show most recent sync.
+
+#### Critical Patterns
+
+**ALWAYS query all three job types** when displaying sync status:
+
+```python
+# CORRECT - Query all job types
+last_sync = db.query(CronLog).filter(
+    CronLog.job_type.in_(["sync", "manual_sync", "github_actions"])
+).order_by(CronLog.run_date.desc()).first()
+
+# WRONG - Only queries one job type
+last_sync = db.query(CronLog).filter(
+    CronLog.job_type == "sync"
+).order_by(CronLog.run_date.desc()).first()
+```
+
+**Applied in**:
+- `api/dashboard.py` - Dashboard header sync status
+- `api/cron/sync.py` - `/api/cron/sync/status` endpoint
+- `api/index.py` - Serverless status endpoint
+
+**Rationale**: Users can trigger syncs via multiple methods (GitHub Actions, local script, Vercel cron). The dashboard must show the most recent sync regardless of source.
 
 ## Vercel Serverless Architecture
 
