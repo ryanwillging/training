@@ -52,9 +52,9 @@ def generate_dashboard_html(db):
     # Get athlete info
     athlete = db.query(Athlete).first()
 
-    # Get last sync time from CronLog
+    # Get last sync time from CronLog (includes both automated and manual syncs)
     last_sync = db.query(CronLog).filter(
-        CronLog.job_type == "sync"
+        CronLog.job_type.in_(["sync", "manual_sync"])
     ).order_by(CronLog.run_date.desc()).first()
 
     # Get latest wellness data (today or most recent)
