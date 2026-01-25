@@ -35,10 +35,10 @@ export function GoalsRingsWidget() {
   const workouts = weekData?.workouts || [];
 
   const swimWorkouts = workouts.filter(
-    (w) => w.workout_type.startsWith('swim')
+    (w) => w.workout_type && w.workout_type.startsWith('swim')
   );
   const liftWorkouts = workouts.filter(
-    (w) => w.workout_type.startsWith('lift')
+    (w) => w.workout_type && w.workout_type.startsWith('lift')
   );
   const vo2Workouts = workouts.filter(
     (w) => w.workout_type === 'vo2'
