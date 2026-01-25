@@ -762,17 +762,20 @@ class TrainingPlanManager:
         scheduled = self.db.query(ScheduledWorkout).filter(
             ScheduledWorkout.athlete_id == self.athlete_id,
             ScheduledWorkout.scheduled_date >= today,
-            ScheduledWorkout.scheduled_date <= end_date,
-            ScheduledWorkout.status == "scheduled"
+            ScheduledWorkout.scheduled_date <= end_date
         ).order_by(ScheduledWorkout.scheduled_date).all()
 
         return [
             {
-                "date": s.scheduled_date.isoformat(),
-                "type": s.workout_type,
-                "name": s.workout_name,
-                "week": s.week_number,
-                "is_test_week": s.is_test_week
+                "id": s.id,
+                "workout_type": s.workout_type,
+                "workout_name": s.workout_name,
+                "scheduled_date": s.scheduled_date.isoformat(),
+                "week_number": s.week_number,
+                "status": s.status,
+                "duration_minutes": s.duration_minutes,
+                "is_test_week": s.is_test_week,
+                "garmin_workout_id": s.garmin_workout_id
             }
             for s in scheduled
         ]
