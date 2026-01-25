@@ -145,7 +145,47 @@ class handler(BaseHTTPRequestHandler):
                     return self.send_json(500, {"error": str(e)})
             return self.send_json(200, {"error": "Database not configured"})
 
-        # Metrics history
+        # Metrics history - filtered by type
+        if path.startswith("/api/metrics/history/") and path != "/api/metrics/history/":
+            metric_type = path.split("/api/metrics/history/")[1]
+            athlete_id = int(query.get("athlete_id", [1])[0])
+            limit = int(query.get("limit", [30])[0])
+
+            db = get_db_session()
+            if db:
+                try:
+                    from database.models import ProgressMetric
+                    metrics = db.query(ProgressMetric).filter(
+                        ProgressMetric.metric_type == metric_type,
+                        ProgressMetric.athlete_id == athlete_id
+                    ).order_by(
+                        ProgressMetric.metric_date.desc()
+                    ).limit(limit).all()
+
+                    result = {
+                        "metric_type": metric_type,
+                        "athlete_id": athlete_id,
+                        "count": len(metrics),
+                        "data": [
+                            {
+                                "id": m.id,
+                                "date": str(m.metric_date),
+                                "value": m.value_numeric,
+                                "value_text": m.value_text,
+                                "notes": m.notes,
+                                "data": m.data if hasattr(m, 'data') else None
+                            }
+                            for m in metrics
+                        ]
+                    }
+                    db.close()
+                    return self.send_json(200, result)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(500, {"error": "Database not configured"})
+
+        # Metrics history - all metrics (legacy)
         if path == "/api/metrics/history":
             db = get_db_session()
             if db:
@@ -207,6 +247,112 @@ class handler(BaseHTTPRequestHandler):
                     except:
                         pass
             return self.send_json(200, status_info)
+
+        # Goals
+        if path == "/api/metrics/goals":
+            athlete_id = int(query.get("athlete_id", [os.environ.get("ATHLETE_ID", "1")])[0])
+
+            db = get_db_session()
+            if db:
+                try:
+                    from database.models import Athlete, ProgressMetric
+                    import json
+
+                    athlete = db.query(Athlete).filter(Athlete.id == athlete_id).first()
+                    if not athlete:
+                        db.close()
+                        return self.send_json(404, {"error": "Athlete not found"})
+
+                    # Parse goals JSON
+                    goals_data = json.loads(athlete.goals) if athlete.goals else {}
+
+                    result = []
+                    goal_id = 0
+
+                    # Transform goals JSON to frontend format
+                    for goal_key, goal_info in goals_data.items():
+                        if goal_key == "weekly_volume":
+                            # Weekly volume goal
+                            goal_id += 1
+                            result.append({
+                                "id": goal_id,
+                                "name": "Weekly Training Volume",
+                                "metric_type": "weekly_volume",
+                                "target_value": goal_info.get("target", 0),
+                                "current_value": goal_info.get("target", 0),  # Would need to calculate from actual data
+                                "unit": goal_info.get("unit", "hours"),
+                                "deadline": None,
+                                "progress_pct": 100  # Would need to calculate from actual data
+                            })
+                        elif isinstance(goal_info, dict) and "target" in goal_info:
+                            # Single metric goals (body_fat, vo2_max, etc)
+                            goal_id += 1
+
+                            # Get current value from latest metric
+                            latest_metric = db.query(ProgressMetric).filter(
+                                ProgressMetric.metric_type == goal_key,
+                                ProgressMetric.athlete_id == athlete_id
+                            ).order_by(ProgressMetric.metric_date.desc()).first()
+
+                            current_value = latest_metric.value_numeric if latest_metric else goal_info.get("current", 0)
+                            target_value = goal_info.get("target", 0)
+
+                            # Calculate progress
+                            if target_value > 0:
+                                progress_pct = min(100, (current_value / target_value) * 100)
+                            else:
+                                progress_pct = 0
+
+                            result.append({
+                                "id": goal_id,
+                                "name": goal_key.replace("_", " ").title(),
+                                "metric_type": goal_key,
+                                "target_value": target_value,
+                                "current_value": current_value,
+                                "unit": goal_info.get("unit", ""),
+                                "deadline": goal_info.get("deadline"),
+                                "progress_pct": round(progress_pct, 1)
+                            })
+                        elif isinstance(goal_info, dict) and "metrics" in goal_info:
+                            # Compound goals (explosiveness with multiple metrics)
+                            for metric_key, metric_info in goal_info.get("metrics", {}).items():
+                                goal_id += 1
+
+                                # Get current value from latest metric
+                                latest_metric = db.query(ProgressMetric).filter(
+                                    ProgressMetric.metric_type == metric_key,
+                                    ProgressMetric.athlete_id == athlete_id
+                                ).order_by(ProgressMetric.metric_date.desc()).first()
+
+                                current_value = metric_info.get("current", [0])[0] if isinstance(metric_info.get("current"), list) else metric_info.get("current", 0)
+                                if latest_metric:
+                                    current_value = latest_metric.value_numeric
+
+                                target_value = metric_info.get("target", [0])[0] if isinstance(metric_info.get("target"), list) else metric_info.get("target", 0)
+
+                                # Calculate progress
+                                if target_value > 0:
+                                    progress_pct = min(100, (current_value / target_value) * 100)
+                                else:
+                                    progress_pct = 0
+
+                                result.append({
+                                    "id": goal_id,
+                                    "name": f"{goal_key.replace('_', ' ').title()}: {metric_key.replace('_', ' ').title()}",
+                                    "metric_type": metric_key,
+                                    "target_value": target_value,
+                                    "current_value": current_value,
+                                    "unit": metric_info.get("unit", ""),
+                                    "deadline": None,
+                                    "progress_pct": round(progress_pct, 1)
+                                })
+
+                    db.close()
+                    return self.send_json(200, result)
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e), "details": "Failed to load goals"})
+            return self.send_json(500, {"error": "Database not configured"})
 
         # Wellness latest
         if path == "/api/wellness/latest":
