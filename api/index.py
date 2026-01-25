@@ -557,25 +557,44 @@ class handler(BaseHTTPRequestHandler):
                 db.close()
                 return self.send_json(500, {"error": str(e)})
 
-        # Manual sync trigger from dashboard
+        # Manual sync trigger from dashboard (triggers GitHub Actions)
         if path == "/api/cron/sync/trigger":
-            db = get_db_session()
-            if not db:
-                return self.send_json(400, {"error": "Database not configured"})
+            github_token = os.environ.get("GITHUB_TOKEN")
+            if not github_token:
+                return self.send_json(503, {
+                    "error": "Manual sync not available - GITHUB_TOKEN not configured"
+                })
+
             try:
-                import time as time_module
-                start_time = time_module.time()
-                results = self._run_sync(db)
-                duration = time_module.time() - start_time
+                import urllib.request
+                # GitHub API endpoint to trigger workflow
+                repo_owner = "ryanwillging"
+                repo_name = "training"
+                workflow_file = "daily-sync.yml"
 
-                # Log as manual web sync
-                self._log_cron_run(db, results, duration, job_type="manual_sync_web")
+                url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_file}/dispatches"
 
-                db.close()
-                return self.send_json(200, results)
+                payload = json.dumps({"ref": "main"}).encode('utf-8')
+                req = urllib.request.Request(url, data=payload, method='POST')
+                req.add_header("Authorization", f"Bearer {github_token}")
+                req.add_header("Accept", "application/vnd.github+json")
+                req.add_header("X-GitHub-Api-Version", "2022-11-28")
+                req.add_header("Content-Type", "application/json")
+
+                response = urllib.request.urlopen(req, timeout=10)
+
+                if response.status == 204:
+                    return self.send_json(200, {
+                        "status": "triggered",
+                        "message": "Sync workflow triggered successfully. Data will be updated in 1-2 minutes.",
+                        "workflow": "daily-sync.yml"
+                    })
+                else:
+                    return self.send_json(response.status, {
+                        "error": f"Failed to trigger workflow: HTTP {response.status}"
+                    })
             except Exception as e:
-                db.close()
-                return self.send_json(500, {"error": str(e)})
+                return self.send_json(500, {"error": f"Error triggering workflow: {str(e)}"})
 
         # Save metrics
         if path == "/api/metrics/save":

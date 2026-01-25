@@ -19,10 +19,13 @@ export function SyncStatusWidget() {
   const syncMutation = useMutation({
     mutationFn: syncApi.triggerSync,
     onSuccess: () => {
-      // Invalidate sync status to refresh the display
-      queryClient.invalidateQueries({ queryKey: ['sync-status'] });
       setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
+      // Keep showing success message longer since sync happens in background
+      setTimeout(() => {
+        setShowSuccess(false);
+        // Refresh status after delay to show updated data
+        queryClient.invalidateQueries({ queryKey: ['sync-status'] });
+      }, 5000);
     },
   });
 
@@ -97,7 +100,7 @@ export function SyncStatusWidget() {
 
       {showSuccess && (
         <div className="text-sm text-green-600 font-medium">
-          Sync completed!
+          Sync triggered! Data will update in 1-2 minutes.
         </div>
       )}
 

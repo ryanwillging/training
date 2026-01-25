@@ -210,120 +210,56 @@ async def cron_sync(
 @router.post("/sync/trigger")
 async def trigger_manual_sync():
     """
-    Manually trigger a data sync.
+    Manually trigger a data sync via GitHub Actions.
 
-    This endpoint can be called from the frontend dashboard to trigger an immediate sync.
-    Creates a CronLog entry with job_type="manual_sync_web".
+    This endpoint triggers the GitHub Actions workflow that runs the sync script.
+    Requires GITHUB_TOKEN environment variable with workflow dispatch permissions.
     """
-    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
-    days = 7  # Look back 7 days
+    import requests
 
-    db = SessionLocal()
-    results = {
-        "date": str(get_eastern_today()),
-        "athlete_id": athlete_id,
-        "days_synced": days,
-        "garmin_activities": None,
-        "garmin_wellness": None,
-        "hevy": None,
-        "errors": []
+    github_token = os.getenv("GITHUB_TOKEN")
+    if not github_token:
+        raise HTTPException(
+            status_code=503,
+            detail="Manual sync not available - GITHUB_TOKEN not configured"
+        )
+
+    # GitHub API endpoint to trigger workflow
+    repo_owner = "ryanwillging"
+    repo_name = "training"
+    workflow_file = "daily-sync.yml"
+
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/actions/workflows/{workflow_file}/dispatches"
+
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+
+    payload = {
+        "ref": "main"
     }
 
     try:
-        start_time = time.time()
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
 
-        # Sync Garmin activities
-        try:
-            garmin = GarminActivityImporter(db, athlete_id)
-            imported, skipped, errors = garmin.import_recent_activities(days)
-            results["garmin_activities"] = {
-                "imported": imported,
-                "skipped": skipped,
-                "errors": errors
+        if response.status_code == 204:
+            return {
+                "status": "triggered",
+                "message": "Sync workflow triggered successfully. Data will be updated in 1-2 minutes.",
+                "workflow": "daily-sync.yml"
             }
-            if errors:
-                results["errors"].extend([f"Garmin Activities: {e}" for e in errors])
-        except Exception as e:
-            results["garmin_activities"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
-            results["errors"].append(f"Garmin activities sync failed: {str(e)}")
-
-        # Sync Garmin wellness data
-        try:
-            wellness = GarminWellnessImporter(db, athlete_id)
-            imported, updated, errors = wellness.import_recent_wellness(days)
-            wellness.update_athlete_metrics()
-            results["garmin_wellness"] = {
-                "imported": imported,
-                "updated": updated,
-                "errors": errors
-            }
-            if errors:
-                results["errors"].extend([f"Garmin Wellness: {e}" for e in errors])
-        except Exception as e:
-            results["garmin_wellness"] = {"imported": 0, "updated": 0, "errors": [str(e)]}
-            results["errors"].append(f"Garmin wellness sync failed: {str(e)}")
-
-        # Sync Hevy workouts
-        try:
-            hevy = HevyActivityImporter(db, athlete_id)
-            imported, skipped, errors = hevy.import_recent_workouts(days)
-            results["hevy"] = {
-                "imported": imported,
-                "skipped": skipped,
-                "errors": errors
-            }
-            if errors:
-                results["errors"].extend([f"Hevy: {e}" for e in errors])
-        except Exception as e:
-            results["hevy"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
-            results["errors"].append(f"Hevy sync failed: {str(e)}")
-
-        # Calculate totals
-        total_imported = (
-            (results["garmin_activities"]["imported"] if results["garmin_activities"] else 0) +
-            (results["garmin_wellness"]["imported"] if results["garmin_wellness"] else 0) +
-            (results["hevy"]["imported"] if results["hevy"] else 0)
-        )
-
-        results["summary"] = {
-            "total_imported": total_imported,
-            "status": "completed" if not results["errors"] else "completed_with_errors"
-        }
-
-        # Persist to CronLog
-        try:
-            duration = time.time() - start_time
-
-            # Determine status
-            if not results["errors"]:
-                status = "success"
-            elif total_imported > 0:
-                status = "partial"
-            else:
-                status = "failed"
-
-            log_entry = CronLog(
-                run_date=get_eastern_now(),
-                job_type="manual_sync_web",  # Distinguish from script/GitHub Actions
-                status=status,
-                garmin_activities_imported=results["garmin_activities"]["imported"] if results["garmin_activities"] else 0,
-                garmin_wellness_imported=results["garmin_wellness"]["imported"] if results["garmin_wellness"] else 0,
-                hevy_imported=results["hevy"]["imported"] if results["hevy"] else 0,
-                errors_json=json.dumps(results["errors"]) if results["errors"] else None,
-                results_json=json.dumps(results),
-                duration_seconds=round(duration, 2)
+        else:
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Failed to trigger workflow: {response.text}"
             )
-            db.add(log_entry)
-            db.commit()
-        except Exception as log_error:
-            # Don't let logging failures break sync
-            print(f"Failed to persist CronLog: {log_error}", file=sys.stderr)
-            db.rollback()
-
-        return results
-
-    finally:
-        db.close()
+    except requests.exceptions.RequestException as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error triggering workflow: {str(e)}"
+        )
 
 
 @router.get("/sync/status")
