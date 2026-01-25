@@ -1,0 +1,8 @@
+requirements.txt
+requirements-production.txt
+venv/
+.env.local
+*.pyc
+__pycache__/
+.pytest_cache/
+tests/

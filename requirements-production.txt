@@ -1,0 +1,22 @@
+fastapi
+mangum  # ASGI adapter for serverless
+python-multipart
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+python-dateutil
+psycopg2-binary>=2.9.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Date/time handling
+pytz
+
+# OpenAI for ChatGPT integration (used by API evaluation endpoint)
+openai>=1.0.0
+
+# Note: garminconnect, hevy-api-client, pandas, numpy, and playwright
+# are not included because they cannot run in Vercel serverless environment.
+# Sync operations run via GitHub Actions using full requirements.txt
