@@ -297,6 +297,10 @@ class handler(BaseHTTPRequestHandler):
                             current_value = latest_metric.value_numeric if latest_metric else goal_info.get("current", 0)
                             target_value = goal_info.get("target", 0)
 
+                            # Ensure numeric values (not None)
+                            current_value = current_value or 0
+                            target_value = target_value or 0
+
                             # Calculate progress
                             if target_value > 0:
                                 progress_pct = min(100, (current_value / target_value) * 100)
@@ -329,6 +333,10 @@ class handler(BaseHTTPRequestHandler):
                                     current_value = latest_metric.value_numeric
 
                                 target_value = metric_info.get("target", [0])[0] if isinstance(metric_info.get("target"), list) else metric_info.get("target", 0)
+
+                                # Ensure numeric values (not None)
+                                current_value = current_value or 0
+                                target_value = target_value or 0
 
                                 # Calculate progress
                                 if target_value > 0:
