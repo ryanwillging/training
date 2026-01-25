@@ -1550,17 +1550,20 @@ class handler(BaseHTTPRequestHandler):
         workouts = db.query(ScheduledWorkout).filter(
             ScheduledWorkout.athlete_id == athlete.id,
             ScheduledWorkout.scheduled_date >= today,
-            ScheduledWorkout.scheduled_date <= end_date,
-            ScheduledWorkout.status == "scheduled"
+            ScheduledWorkout.scheduled_date <= end_date
         ).order_by(ScheduledWorkout.scheduled_date).all()
 
         return [
             {
-                "date": str(w.scheduled_date),
-                "type": w.workout_type,
-                "name": w.workout_name,
-                "week": w.week_number,
-                "is_test_week": w.is_test_week
+                "id": w.id,
+                "workout_type": w.workout_type,
+                "workout_name": w.workout_name,
+                "scheduled_date": str(w.scheduled_date),
+                "week_number": w.week_number,
+                "status": w.status,
+                "duration_minutes": w.duration_minutes,
+                "is_test_week": w.is_test_week,
+                "garmin_workout_id": w.garmin_workout_id
             }
             for w in workouts
         ]
