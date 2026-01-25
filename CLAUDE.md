@@ -97,9 +97,82 @@ except Exception:
 
 ## Sync Architecture
 
-- **GitHub Actions** (5:00 UTC daily): Runs `scripts/run_sync.py`, creates CronLog with `job_type="github_actions"`
-- **Manual sync**: Run `python scripts/run_sync.py` locally, creates CronLog with `job_type="manual_sync"`
-- **Vercel cron**: Monitoring only (can't import garminconnect/hevy-api-client in serverless)
+### Three Sync Methods
+
+1. **GitHub Actions Scheduled** (5:00 UTC daily) - ⚠️ Primary sync method
+   - Workflow: `.github/workflows/daily-sync.yml`
+   - Runs: `scripts/run_sync.py`
+   - Logs: `job_type="github_actions"`
+   - **Known Issue**: May not run automatically (see Troubleshooting below)
+
+2. **Manual Web Sync** (Dashboard "Sync Now" button)
+   - Endpoint: `POST /api/cron/sync/trigger`
+   - Triggers: GitHub Actions workflow via API
+   - Requires: `GITHUB_TOKEN` environment variable
+   - Logs: `job_type="manual_sync_web"`
+   - **Note**: Does NOT run sync directly (serverless can't import packages)
+
+3. **Manual Local Sync** (Development only)
+   - Run: `python scripts/run_sync.py`
+   - Logs: `job_type="manual_sync"`
+   - Requires: Local Python environment with all dependencies
+
+### Vercel Serverless Limitations
+- **Cannot import**: `garminconnect`, `hevy-api-client` (binary dependencies)
+- **Old cron endpoint** (`/api/cron/sync`): Still exists but fails in production
+- **Solution**: All syncs must go through GitHub Actions
+
+### Troubleshooting Scheduled Sync
+
+**If scheduled workflow isn't running automatically:**
+
+1. **Check if it's enabled:**
+   ```bash
+   gh api repos/ryanwillging/training/actions/workflows/daily-sync.yml --jq '.state'
+   # Should return: "active"
+   ```
+
+2. **View recent runs:**
+   ```bash
+   gh run list --repo ryanwillging/training --workflow daily-sync.yml --limit 10
+   ```
+
+3. **Check for scheduled runs (vs manual):**
+   ```bash
+   gh api repos/ryanwillging/training/actions/workflows/daily-sync.yml/runs \
+     --jq '.workflow_runs[:10] | .[] | "\(.created_at) - \(.event)"'
+   # Look for "schedule" events (not just "workflow_dispatch")
+   ```
+
+4. **Force re-registration** (if only seeing manual runs):
+   ```bash
+   # Make a trivial change to the workflow file
+   # GitHub sometimes needs a new commit to re-register schedules
+   ```
+
+5. **Manual trigger** (as workaround):
+   ```bash
+   gh workflow run daily-sync.yml --repo ryanwillging/training
+   ```
+
+**Common causes of schedule failures:**
+- **New workflow delay**: GitHub may skip the first 1-2 scheduled runs after workflow creation
+- **Timing delays**: Scheduled runs can be delayed by 3-60 minutes from scheduled time
+- **Repository inactivity**: GitHub disables schedules after 60 days of no repo commits
+- **Requires activation commit**: Sometimes needs a commit after workflow file creation to activate
+- **Workflow file syntax errors**: Check Actions tab for warnings
+- **Organization/account-level Actions restrictions**
+- **GitHub Actions outages** (rare, check https://www.githubstatus.com/)
+
+**Investigation Results (Jan 25, 2026)**:
+- Workflow created: Jan 24 at 20:01 UTC
+- First scheduled run: Jan 25 at 05:00 UTC - **DID NOT RUN** ❌
+- Manual trigger: Jan 24 at 20:15 UTC - **SUCCESS** ✅
+- Workflow state: **active** ✅
+- Likely cause: First scheduled run after workflow creation (GitHub may skip first run)
+- **Next test**: Monitor Jan 26 at 05:00 UTC for scheduled run
+
+**Recommendation**: Use the "Sync Now" button on dashboard as primary sync method until scheduled runs are confirmed working consistently.
 
 ## Training Plan
 
@@ -138,7 +211,29 @@ except Exception:
 
 ## Environment Variables
 
-`DATABASE_URL`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `HEVY_API_KEY`, `CRON_SECRET`, `OPENAI_API_KEY`, `OPENAI_MODEL`
+### Required for Backend API
+- `DATABASE_URL` - PostgreSQL connection string
+- `GARMIN_EMAIL` - Garmin Connect account email
+- `GARMIN_PASSWORD` - Garmin Connect account password
+- `HEVY_API_KEY` - Hevy API key from https://hevyapp.com/api
+- `ATHLETE_ID` - Athlete ID (default: 1)
+- `OPENAI_API_KEY` - OpenAI API key for plan evaluation
+- `OPENAI_MODEL` - OpenAI model (default: gpt-4-turbo-preview)
+
+### Required for Manual Sync Button
+- `GITHUB_TOKEN` - GitHub Personal Access Token with `workflow` scope
+  - **Purpose**: Allows the dashboard "Sync Now" button to trigger GitHub Actions workflow
+  - **Setup**:
+    1. Create token at https://github.com/settings/tokens
+    2. Click "Generate new token (classic)"
+    3. Name: "Training App Workflow Trigger"
+    4. Select scope: ✓ `workflow` (allows triggering workflows)
+    5. Generate and copy the token
+    6. Add to Vercel: `vercel env add GITHUB_TOKEN` (or via dashboard)
+  - **Without this**: The "Sync Now" button will show "Manual sync not available"
+
+### Optional
+- `CRON_SECRET` - Secret for securing cron endpoints (legacy, not currently required)
 
 ## Vercel Config
 
@@ -174,10 +269,35 @@ curl https://training.ryanwillging.com/api/plan/status  # Check plan status
 
 | Issue | Solution |
 |-------|----------|
+| **Dashboard 404 after backend deploy** | **CRITICAL**: The backend "training" project steals the domain when it deploys. See "Domain Configuration" below. |
 | Garmin auth fails | Check credentials in Vercel env vars, may need re-auth |
 | Hevy sync empty | Verify `HEVY_API_KEY` with `curl -H "Authorization: Bearer $KEY" https://api.hevyapp.com/v1/workouts` |
 | Env var whitespace | Re-enter in Vercel dashboard (copy-paste adds newlines) |
 | Bad interpreter error | Recreate venv: `rm -rf venv && python3 -m venv venv && pip install -r requirements.txt` |
+
+### Domain Configuration (CRITICAL)
+
+**Problem**: The domain `training.ryanwillging.com` keeps switching from frontend to backend after git push.
+
+**Root cause**: Both the backend ("training" project) and frontend ("frontend" project) have training.ryanwillging.com configured. When backend deploys, Vercel auto-aliases it to the domain.
+
+**Permanent fix** (must be done via Vercel web dashboard):
+1. Go to https://vercel.com/ryanwillgings-projects/training/settings/domains
+2. Remove `training.ryanwillging.com` from the backend project
+3. Ensure only https://vercel.com/ryanwillgings-projects/frontend/settings/domains has the domain
+
+**Quick fix** (temporary, after every backend deploy):
+```bash
+cd frontend
+vercel alias set $(vercel ls | grep "frontend-" | head -1 | awk '{print $1}') training.ryanwillging.com
+```
+
+**Verify domain is pointing to frontend**:
+```bash
+vercel alias ls | grep training.ryanwillging.com
+# Should show: frontend-xxxxxx.vercel.app -> training.ryanwillging.com
+# NOT: training-xxxxxx.vercel.app -> training.ryanwillging.com
+```
 
 ## Adding New Pages
 
