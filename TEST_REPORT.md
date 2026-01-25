@@ -199,6 +199,49 @@ The training website is in excellent condition with only minor navigation issues
 
 **Visual Quality:** Clean form layout with logical grouping and helpful placeholders
 
+---
+
+# Production E2E Regression Notes
+**Test Date:** January 25, 2026  
+**Test URL:** https://training.ryanwillging.com  
+**Suite:** `pytest tests/e2e/ --base-url https://training.ryanwillging.com`  
+**Result:** 34 failed, 249 passed
+
+## High-Level Failures
+1. **Console 404 errors on multiple Next.js pages**
+   - Impacted: `/dashboard`, `/goals`, `/plan-adjustments`, `/explore`, `/upcoming`, `/reviews`, `/metrics`
+   - Symptom: `Failed to load resource: the server responded with a status of 404 ()`
+   - Suggested fix: Identify the missing assets/requests and ensure they are deployed or proxied correctly.
+
+2. **Health endpoint not available on frontend domain**
+   - `GET /health` returns `404`
+   - Tests failing: `TestHealthEndpoints::test_health_check`, `TestPerformance::test_health_response_time`, `TestErrorHandling::test_health_endpoint`
+   - Suggested fix: Provide `/health` on the frontend domain or proxy to the API.
+
+3. **Cron status payload mismatch**
+   - Expected: `status == "configured"`
+   - Actual: `status == "success"`
+   - Tests failing: `TestCronStatusEndpoint::test_status_endpoint_exists`, `TestHealthEndpoints::test_cron_status`
+   - Suggested fix: align test expectations with backend payload or adjust API response.
+
+4. **Missing `h1` headings on several pages**
+   - Impacted: `/goals`, `/explore`, `/upcoming`, `/reviews`, `/metrics`
+   - Tests failing: multiple `TestAccessibility::test_page_has_main_heading`
+   - Suggested fix: ensure each page renders a top-level `<h1>`.
+
+5. **Navigation active-state and link expectations**
+   - Failures in `test_comprehensive_ui.py` around nav link behavior and active state.
+   - Suggested fix: ensure nav links include active styling/attributes and that navigation works across legacy aliases (`/metrics`, `/reviews`).
+
+6. **Design-system checks**
+   - `test_no_error_messages_visible` fails because page HTML contains `undefined`.
+   - Suggested fix: audit rendered HTML for uninitialized values in templates.
+
+## Next Actions to Stabilize
+1. Deploy the latest frontend build after fixes.
+2. Verify `/health` and `/api/cron/sync/status` behaviors on production.
+3. Re-run `pytest tests/e2e/ --base-url https://training.ryanwillging.com` and update this section with new results.
+
 #### Daily Report (/api/reports/daily) ✅ FUNCTIONAL
 **Status:** Loads correctly with minimal data
 

@@ -112,8 +112,9 @@ Tests can be integrated into GitHub Actions:
 When a test fails:
 1. Check the error message and stack trace
 2. Open the URL in a browser and check console
-3. Document findings in `docs/PHASE_A_TEST_RESULTS.md`
-4. Create issue with test name, error, and expected vs actual behavior
+3. Document findings in `docs/PHASE_A_TEST_RESULTS.md` (Phase A suite)
+4. Document production e2e regressions in `TEST_REPORT.md`
+5. Create issue with test name, error, and expected vs actual behavior
 
 ## Future Enhancements
 
