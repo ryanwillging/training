@@ -225,6 +225,7 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     from database.models import CronLog
                     from api.timezone import get_eastern_now
+                    import json as json_module
                     last_run = db.query(CronLog).filter(
                         CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"])
                     ).order_by(CronLog.run_date.desc()).first()
@@ -239,7 +240,7 @@ class handler(BaseHTTPRequestHandler):
                             "wellness_imported": last_run.garmin_wellness_imported,
                             "hevy_imported": last_run.hevy_imported,
                             "duration_seconds": last_run.duration_seconds,
-                            "errors": json.loads(last_run.errors_json) if last_run.errors_json else []
+                            "errors": json_module.loads(last_run.errors_json) if last_run.errors_json else []
                         }
                     db.close()
                 except Exception as e:
