@@ -18,8 +18,9 @@ import time
 
 # Frontend is deployed separately from API
 # API: https://training-ryanwillgings-projects.vercel.app (backend/Python)
-# Frontend: https://frontend-ryanwillgings-projects.vercel.app (Next.js)
-BASE_URL = "https://frontend-ryanwillgings-projects.vercel.app"
+# Frontend Production: https://training.ryanwillging.com (aliased from frontend.vercel.app)
+# Frontend Staging: https://frontend-ryanwillgings-projects.vercel.app (Next.js)
+BASE_URL = "https://training.ryanwillging.com"
 
 
 class TestDashboardWidgets:
