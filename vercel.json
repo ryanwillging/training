@@ -1,11 +1,19 @@
 {
+  "buildCommand": "cd frontend && npm install && npm run build",
+  "outputDirectory": "frontend/.next",
+  "framework": "nextjs",
   "functions": {
     "api/index.py": {
       "maxDuration": 60
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    { "source": "/api/:path*", "destination": "/api/index" },
+    { "source": "/:path*", "destination": "/:path*" }
+  ],
+  "redirects": [
+    { "source": "/metrics", "destination": "/goals", "permanent": true },
+    { "source": "/reviews", "destination": "/plan-adjustments", "permanent": true }
   ],
   "crons": [
     {

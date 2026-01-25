@@ -208,6 +208,52 @@ class handler(BaseHTTPRequestHandler):
                         pass
             return self.send_json(200, status_info)
 
+        # Wellness latest
+        if path == "/api/wellness/latest":
+            db = get_db_session()
+            if db:
+                try:
+                    from database.models import DailyWellness
+                    athlete_id = int(os.environ.get("ATHLETE_ID", "1"))
+                    wellness = db.query(DailyWellness).filter(
+                        DailyWellness.athlete_id == athlete_id
+                    ).order_by(DailyWellness.date.desc()).first()
+                    db.close()
+                    if not wellness:
+                        return self.send_json(200, {
+                            "date": None, "hrv": None, "resting_heart_rate": None,
+                            "body_battery": None, "sleep_score": None, "sleep_duration_hours": None,
+                            "rem_sleep_minutes": None, "deep_sleep_minutes": None, "light_sleep_minutes": None,
+                            "awake_minutes": None, "stress_level": None, "steps": None, "active_calories": None,
+                        })
+                    return self.send_json(200, self._serialize_wellness(wellness))
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(200, {"error": "Database not configured"})
+
+        # Wellness history
+        if path == "/api/wellness":
+            days = int(query.get("days", ["30"])[0])
+            db = get_db_session()
+            if db:
+                try:
+                    from database.models import DailyWellness
+                    athlete_id = int(os.environ.get("ATHLETE_ID", "1"))
+                    today = get_eastern_today()
+                    start_date = today - timedelta(days=days)
+                    records = db.query(DailyWellness).filter(
+                        DailyWellness.athlete_id == athlete_id,
+                        DailyWellness.date >= start_date,
+                        DailyWellness.date <= today
+                    ).order_by(DailyWellness.date.desc()).all()
+                    db.close()
+                    return self.send_json(200, [self._serialize_wellness(w) for w in records])
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(200, [])
+
         # Plan status
         if path == "/api/plan/status":
             db = get_db_session()
@@ -1089,6 +1135,24 @@ class handler(BaseHTTPRequestHandler):
             "reports": reports,
             "count": len(reports),
             "weekly_url": "/api/reports/weekly"
+        }
+
+    def _serialize_wellness(self, w):
+        """Serialize a DailyWellness record to JSON-friendly dict."""
+        return {
+            "date": str(w.date),
+            "hrv": w.hrv_last_night,
+            "resting_heart_rate": w.resting_heart_rate,
+            "body_battery": w.body_battery_current,
+            "sleep_score": w.sleep_score,
+            "sleep_duration_hours": round(w.sleep_duration_seconds / 3600, 2) if w.sleep_duration_seconds else None,
+            "rem_sleep_minutes": round(w.sleep_rem_seconds / 60) if w.sleep_rem_seconds else None,
+            "deep_sleep_minutes": round(w.sleep_deep_seconds / 60) if w.sleep_deep_seconds else None,
+            "light_sleep_minutes": round(w.sleep_light_seconds / 60) if w.sleep_light_seconds else None,
+            "awake_minutes": round(w.sleep_awake_seconds / 60) if w.sleep_awake_seconds else None,
+            "stress_level": w.avg_stress_level,
+            "steps": w.steps,
+            "active_calories": w.active_calories,
         }
 
     def _get_plan_status(self, db):

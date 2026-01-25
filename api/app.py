@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 import tempfile
 
-from api.routes import import_router, metrics_router, reports_router, plan_router
+from api.routes import import_router, metrics_router, reports_router, plan_router, wellness_router
 from api.cron.sync import router as cron_router
 
 # Lazy database initialization to support serverless cold starts
@@ -50,6 +50,7 @@ app.include_router(metrics_router, prefix="/api")
 app.include_router(cron_router, prefix="/api")
 app.include_router(reports_router, prefix="/api")
 app.include_router(plan_router, prefix="/api")
+app.include_router(wellness_router, prefix="/api")
 
 
 @app.on_event("startup")
