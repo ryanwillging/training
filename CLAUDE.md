@@ -41,17 +41,18 @@ tests/e2e/     Playwright tests
 
 ## Architecture
 
-**Frontend (Next.js)**:
-- Deployed as separate Vercel project: `ryanwillgings-projects/frontend`
-- Aliased to: `training.ryanwillging.com`
-- API calls proxied to: `training-ryanwillgings-projects.vercel.app/api/*`
-- Environment variable: `API_URL=https://training-ryanwillgings-projects.vercel.app`
+**Two Separate Vercel Projects:**
 
-**Backend (Python/FastAPI)**:
-- Deployed as Vercel project: `ryanwillgings-projects/training`
-- Direct URL: `training-ryanwillgings-projects.vercel.app`
-- Handles all `/api/*` endpoints
-- GitHub Actions runs daily sync at 5:00 UTC
+1. **Frontend** (Next.js) - Project name: `frontend`
+   - Deployed to: `frontend-smoky-five-99.vercel.app` (changes per deployment)
+   - Production domain: `training.ryanwillging.com` ⚠️ Must point to this project
+   - API calls proxied to backend
+
+2. **Backend** (Python/FastAPI) - Project name: `training`
+   - Deployed to: `training-ryanwillgings-projects.vercel.app`
+   - Handles all `/api/*` endpoints
+   - GitHub Actions runs daily sync at 5:00 UTC
+   - ⚠️ Should NOT have training.ryanwillging.com domain (frontend only)
 
 ## Critical Patterns
 
@@ -102,11 +103,12 @@ except Exception:
 
 ## Training Plan
 
-- **24 weeks**, anchored to January 20, 2025
-- **Primary Goal**: 400yd freestyle (target TBD after baseline)
+- **24 weeks**, started January 20, 2026 (ends ~June 2026)
+- **Current week**: Check `/api/plan/status` for live week number
+- **Primary Goal**: 400yd freestyle (target TBD after Week 2 baseline test)
 - **Test weeks**: 2, 12, 24
-- **Weekly**: Mon=Swim A, Tue=Lift A, Wed=REST, Thu=Swim B, Fri=VO2, Sat=Lift B, Sun=REST
-- **AI modifications**: Next 7 days only, stored in DailyReview for approval at `/reviews`
+- **Weekly schedule**: Mon=Swim A, Tue=Lift A, Wed=REST, Thu=Swim B, Fri=VO2, Sat=Lift B, Sun=REST
+- **AI modifications**: Next 7 days only, stored in DailyReview for approval at `/plan-adjustments`
 
 ## Key Terminology (from PRD.md)
 
@@ -126,11 +128,13 @@ except Exception:
 
 | Endpoint | Purpose |
 |----------|---------|
-| `/dashboard` | Main dashboard (HTML) |
-| `/reviews` | Plan modifications to approve/reject |
-| `/metrics` | Body composition, performance tests |
-| `/api/cron/sync/status` | Last sync info |
+| `/api/cron/sync/status` | Last sync info (job type, hours ago, import counts) |
+| `/api/plan/status` | Current week, test week status, adherence rate |
+| `/api/plan/upcoming?days=7` | Next N days of scheduled workouts |
+| `/api/wellness/latest` | Most recent wellness data (HRV, sleep, etc.) |
 | `/api/plan/evaluate-with-context` | Run AI evaluation with user notes |
+| `/api/metrics/goals` | Goals with current/target values |
+| `/api/plan/reviews/latest` | Latest AI review with proposed modifications |
 
 ## Environment Variables
 
@@ -141,6 +145,30 @@ except Exception:
 - Dependencies: `pyproject.toml` (NOT requirements.txt)
 - Timeout: 60s for AI evaluation (`vercel.json` → `functions.api/index.py.maxDuration`)
 - Limitation: `garminconnect`/`hevy-api-client` cannot import in serverless
+
+## Vercel Debugging
+
+**Check deployments:**
+```bash
+vercel ls --scope ryanwillgings-projects
+vercel inspect <deployment-url>  # Shows aliases, build info
+```
+
+**Fix domain pointing to wrong project:**
+```bash
+# Get latest deployment URL from correct project
+vercel ls --scope ryanwillgings-projects | grep frontend
+
+# Point domain to that deployment
+vercel alias set <deployment-url> training.ryanwillging.com
+```
+
+**Verify site is working:**
+```bash
+curl -I https://training.ryanwillging.com  # Should return 200 or 307
+curl https://training.ryanwillging.com/api/cron/sync/status  # Check API
+curl https://training.ryanwillging.com/api/plan/status  # Check plan status
+```
 
 ## Troubleshooting
 
@@ -163,15 +191,19 @@ except Exception:
 3. Include in `api/app.py`: `app.include_router(my_feature_router, prefix="/api")`
 4. **Also update `api/index.py`** (Vercel serverless handler)
 
-## Navigation (Current vs Planned)
+## Navigation
 
-| Current | Planned | Status |
-|---------|---------|--------|
-| `/dashboard` | Main Dashboard | Rename Phase A |
-| - | `/explore` | New Phase A |
-| `/reviews` | `/plan-adjustments` | Rename Phase A |
-| `/metrics` | `/goals` | Rename Phase A |
-| `/api/reports/daily` | - | Remove Phase A |
+**Live Routes (Phase A Complete):**
+- `/dashboard` - Main Dashboard (6 widgets: Today's Plan, Recovery, Goals, This Week, Plan Changes, Sleep)
+- `/explore` - Long-term trends and analytics
+- `/goals` - Goal management and progress tracking
+- `/plan-adjustments` - Review AI recommendations
+- `/upcoming` - Scheduled workouts calendar
+
+**Implementation Notes:**
+- Frontend: Next.js 14 with React components
+- Backend: FastAPI endpoints serve data via `/api/*`
+- All routes are mobile-responsive
 
 ## Git Workflow
 
