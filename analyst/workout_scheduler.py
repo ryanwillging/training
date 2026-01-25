@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from analyst.plan_parser import PlanParser, Workout, WorkoutType, TrainingPlan
 from database.models import Athlete, ScheduledWorkout
+from api.timezone import get_eastern_today
 
 
 @dataclass
@@ -45,21 +46,23 @@ class WorkoutScheduler:
         athlete = self.db.query(Athlete).filter(Athlete.id == self.athlete_id).first()
         if athlete:
             goals_data = athlete.goals or {}
+            if isinstance(goals_data, str):
+                goals_data = json.loads(goals_data)
             goals_data["training_plan"] = {
                 "name": self.plan.name,
                 "start_date": start_date.isoformat(),
                 "total_weeks": self.plan.total_weeks,
                 "test_weeks": self.plan.test_weeks,
-                "initialized_at": date.today().isoformat(),
+                "initialized_at": get_eastern_today().isoformat(),
             }
-            athlete.goals = goals_data
+            athlete.goals = json.dumps(goals_data) if isinstance(athlete.goals, str) else goals_data
             self.db.commit()
 
         return self.plan
 
     def get_current_week(self, start_date: date) -> int:
         """Calculate the current week number based on start date."""
-        days_elapsed = (date.today() - start_date).days
+        days_elapsed = (get_eastern_today() - start_date).days
         return min(max(1, (days_elapsed // 7) + 1), 24)
 
     def get_workouts_for_week(self, week_number: int) -> List[Workout]:
@@ -73,7 +76,7 @@ class WorkoutScheduler:
         if not self.plan:
             return []
 
-        today = date.today()
+        today = get_eastern_today()
         end_date = today + timedelta(days=days)
 
         return [
@@ -148,7 +151,7 @@ class WorkoutScheduler:
 
         if workout:
             workout.status = "completed"
-            workout.completed_date = date.today()
+            workout.completed_date = get_eastern_today()
             if actual_data:
                 workout.actual_data_json = json.dumps(actual_data)
             self.db.commit()
@@ -212,18 +215,27 @@ class WorkoutScheduler:
         """
         Get overall progress through the training plan.
         """
-        if not self.plan:
-            return {}
-
         scheduled = self.db.query(ScheduledWorkout).filter(
             ScheduledWorkout.athlete_id == self.athlete_id
         ).all()
 
-        total_workouts = len(self.plan.workouts)
+        total_workouts = len(self.plan.workouts) if self.plan else len(scheduled)
         completed = len([s for s in scheduled if s.status == "completed"])
         skipped = len([s for s in scheduled if s.status == "skipped"])
         modified = len([s for s in scheduled if s.status == "modified"])
         scheduled_count = len([s for s in scheduled if s.status == "scheduled"])
+
+        # Determine plan start date from athlete metadata when available.
+        athlete = self.db.query(Athlete).filter(Athlete.id == self.athlete_id).first()
+        plan_start: Optional[date] = None
+        total_weeks = 24
+        if athlete and athlete.goals:
+            goals_data = json.loads(athlete.goals) if isinstance(athlete.goals, str) else athlete.goals
+            plan_info = goals_data.get("training_plan", {})
+            start_str = plan_info.get("start_date")
+            if start_str:
+                plan_start = date.fromisoformat(start_str)
+            total_weeks = int(plan_info.get("total_weeks", total_weeks))
 
         # Calculate adherence rate
         attempted = completed + skipped
@@ -237,30 +249,66 @@ class WorkoutScheduler:
             "modified": modified,
             "pending": scheduled_count,
             "adherence_rate": round(adherence_rate, 1),
-            "current_week": self.get_current_week(self.plan.start_date) if self.plan.start_date else None,
+            "current_week": self.get_current_week(plan_start) if plan_start else None,
+            "total_weeks": total_weeks,
         }
 
     def get_weekly_summary(self, week_number: int) -> Dict[str, Any]:
-        """Get a summary of workouts for a specific week."""
+        """Get a dashboard-friendly summary of workouts for a specific week."""
         scheduled = self.db.query(ScheduledWorkout).filter(
             ScheduledWorkout.athlete_id == self.athlete_id,
             ScheduledWorkout.week_number == week_number
-        ).all()
+        ).order_by(ScheduledWorkout.scheduled_date).all()
+
+        # Determine start/end dates from athlete plan metadata if present.
+        athlete = self.db.query(Athlete).filter(Athlete.id == self.athlete_id).first()
+        plan_start: Optional[date] = None
+        if athlete and athlete.goals:
+            goals_data = json.loads(athlete.goals) if isinstance(athlete.goals, str) else athlete.goals
+            plan_info = goals_data.get("training_plan", {})
+            start_str = plan_info.get("start_date")
+            if start_str:
+                plan_start = date.fromisoformat(start_str)
+
+        if plan_start:
+            week_start = plan_start + timedelta(weeks=week_number - 1)
+            week_end = week_start + timedelta(days=6)
+        elif scheduled:
+            week_start = scheduled[0].scheduled_date
+            week_end = scheduled[-1].scheduled_date
+        else:
+            week_start = None
+            week_end = None
+
+        completed = len([s for s in scheduled if s.status == "completed"])
+        total = len(scheduled)
+        completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
+        is_test_week = week_number in [2, 12, 24]
+        if not plan_start and not scheduled:
+            is_test_week = False
 
         return {
-            "week": week_number,
+            "week_number": week_number,
+            "start_date": week_start.isoformat() if week_start else None,
+            "end_date": week_end.isoformat() if week_end else None,
+            "is_test_week": is_test_week,
+            "completion_rate": completion_rate,
             "workouts": [
                 {
-                    "type": s.workout_type,
-                    "name": s.workout_name,
-                    "date": s.scheduled_date.isoformat() if s.scheduled_date else None,
+                    "id": s.id,
+                    "workout_type": s.workout_type,
+                    "workout_name": s.workout_name,
+                    "scheduled_date": s.scheduled_date.isoformat() if s.scheduled_date else None,
+                    "week_number": s.week_number,
                     "status": s.status,
                     "duration_minutes": s.duration_minutes,
+                    "is_test_week": s.is_test_week,
+                    "garmin_workout_id": s.garmin_workout_id,
                 }
                 for s in scheduled
             ],
-            "completed": len([s for s in scheduled if s.status == "completed"]),
-            "total": len(scheduled),
+            "completed": completed,
+            "total": total,
         }
 
     def _workout_to_dict(self, workout: Workout) -> Dict[str, Any]:

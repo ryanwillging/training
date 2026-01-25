@@ -267,38 +267,64 @@ async def cron_status():
     """
     Cron status with last run information.
     Shows when sync last ran and whether it succeeded.
+    Returns format expected by frontend SyncStatus interface.
     """
     db = SessionLocal()
     try:
-        # Get most recent sync (automated, manual, or GitHub Actions)
+        # Get most recent SUCCESSFUL sync (not serverless failures)
         last_run = db.query(CronLog).filter(
-            CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"])
+            CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"]),
+            CronLog.status.in_(["success", "partial"])  # Exclude failed serverless attempts
         ).order_by(CronLog.run_date.desc()).first()
 
-        base_status = {
-            "endpoint": "/api/cron/sync",
-            "schedule": "0 5 * * * (5:00 UTC daily)",
-            "status": "configured"
-        }
-
         if not last_run:
-            base_status["last_run"] = None
-            return base_status
+            return {
+                "last_sync": None,
+                "job_type": None,
+                "status": "never_synced",
+                "hours_since_sync": None,
+                "message": "No successful sync recorded"
+            }
 
         # Use timezone-naive datetime for comparison (database stores naive datetimes)
         hours_since = (get_eastern_now().replace(tzinfo=None) - last_run.run_date).total_seconds() / 3600
+        hours_since = max(0, round(hours_since, 1))  # Ensure non-negative
 
-        base_status["last_run"] = {
-            "date": last_run.run_date.isoformat(),
-            "status": last_run.status,
-            "hours_ago": round(hours_since, 1),
-            "activities_imported": last_run.garmin_activities_imported,
-            "wellness_imported": last_run.garmin_wellness_imported,
-            "hevy_imported": last_run.hevy_imported,
-            "duration_seconds": last_run.duration_seconds,
-            "errors": json.loads(last_run.errors_json) if last_run.errors_json else []
+        # Map job_type to user-friendly labels
+        job_type_labels = {
+            "github_actions": "automatic",
+            "sync": "automatic",
+            "manual_sync": "manual",
+            "manual_sync_web": "manual"
         }
+        job_type_label = job_type_labels.get(last_run.job_type, last_run.job_type)
 
-        return base_status
+        # Build message
+        total_imported = (
+            (last_run.garmin_activities_imported or 0) +
+            (last_run.garmin_wellness_imported or 0) +
+            (last_run.hevy_imported or 0)
+        )
+
+        if last_run.status == "success":
+            message = f"Synced {total_imported} items"
+        else:
+            message = f"Partial sync: {total_imported} items"
+
+        return {
+            "last_sync": last_run.run_date.isoformat(),
+            "job_type": job_type_label,
+            "status": last_run.status,
+            "hours_since_sync": hours_since,
+            "message": message,
+            # Additional details for the widget
+            "details": {
+                "activities_imported": last_run.garmin_activities_imported,
+                "wellness_imported": last_run.garmin_wellness_imported,
+                "hevy_imported": last_run.hevy_imported,
+                "duration_seconds": last_run.duration_seconds,
+                "errors": json.loads(last_run.errors_json) if last_run.errors_json else []
+            }
+        }
     finally:
         db.close()

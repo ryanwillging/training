@@ -213,43 +213,86 @@ class handler(BaseHTTPRequestHandler):
 
         # Cron status
         if path == "/api/cron/sync/status":
-            status_info = {
-                "endpoint": "/api/cron/sync",
-                "schedule": "0 5 * * * (5:00 UTC daily)",
-                "status": "configured",
-                "last_run": None
-            }
-            # Try to get last run from database
+            # Try to get last SUCCESSFUL run from database
             db = get_db_session()
             if db:
                 try:
                     from database.models import CronLog
                     from api.timezone import get_eastern_now
                     import json as json_module
+
+                    # Get most recent SUCCESSFUL sync (not serverless failures)
                     last_run = db.query(CronLog).filter(
-                        CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"])
+                        CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"]),
+                        CronLog.status.in_(["success", "partial"])
                     ).order_by(CronLog.run_date.desc()).first()
-                    if last_run:
-                        # Use timezone-naive datetime for comparison (database stores naive datetimes)
-                        hours_since = (get_eastern_now().replace(tzinfo=None) - last_run.run_date).total_seconds() / 3600
-                        status_info["last_run"] = {
-                            "date": last_run.run_date.isoformat() if last_run.run_date else None,
-                            "status": last_run.status,
-                            "hours_ago": round(hours_since, 1),
+
+                    if not last_run:
+                        db.close()
+                        return self.send_json(200, {
+                            "last_sync": None,
+                            "job_type": None,
+                            "status": "never_synced",
+                            "hours_since_sync": None,
+                            "message": "No successful sync recorded"
+                        })
+
+                    # Use timezone-naive datetime for comparison
+                    hours_since = (get_eastern_now().replace(tzinfo=None) - last_run.run_date).total_seconds() / 3600
+                    hours_since = max(0, round(hours_since, 1))
+
+                    # Map job_type to user-friendly labels
+                    job_type_labels = {
+                        "github_actions": "automatic",
+                        "sync": "automatic",
+                        "manual_sync": "manual",
+                        "manual_sync_web": "manual"
+                    }
+                    job_type_label = job_type_labels.get(last_run.job_type, last_run.job_type)
+
+                    # Build message
+                    total_imported = (
+                        (last_run.garmin_activities_imported or 0) +
+                        (last_run.garmin_wellness_imported or 0) +
+                        (last_run.hevy_imported or 0)
+                    )
+                    message = f"Synced {total_imported} items" if last_run.status == "success" else f"Partial sync: {total_imported} items"
+
+                    status_info = {
+                        "last_sync": last_run.run_date.isoformat() if last_run.run_date else None,
+                        "job_type": job_type_label,
+                        "status": last_run.status,
+                        "hours_since_sync": hours_since,
+                        "message": message,
+                        "details": {
                             "activities_imported": last_run.garmin_activities_imported,
                             "wellness_imported": last_run.garmin_wellness_imported,
                             "hevy_imported": last_run.hevy_imported,
                             "duration_seconds": last_run.duration_seconds,
                             "errors": json_module.loads(last_run.errors_json) if last_run.errors_json else []
                         }
+                    }
                     db.close()
+                    return self.send_json(200, status_info)
                 except Exception as e:
-                    status_info["last_run_error"] = str(e)
                     try:
                         db.close()
                     except:
                         pass
-            return self.send_json(200, status_info)
+                    return self.send_json(200, {
+                        "last_sync": None,
+                        "job_type": None,
+                        "status": "error",
+                        "hours_since_sync": None,
+                        "message": f"Error: {str(e)}"
+                    })
+            return self.send_json(200, {
+                "last_sync": None,
+                "job_type": None,
+                "status": "no_database",
+                "hours_since_sync": None,
+                "message": "Database not configured"
+            })
 
         # Goals
         if path == "/api/metrics/goals":
@@ -1508,13 +1551,22 @@ class handler(BaseHTTPRequestHandler):
             return {
                 "initialized": False,
                 "start_date": None,
-                "current_week": None,
-                "progress": {}
+                "end_date": None,
+                "current_week": 1,
+                "total_weeks": int(plan_info.get("total_weeks", 24)),
+                "progress": {},
+                "is_test_week": False,
+                "next_test_week": 2,
+                "days_until_end": None,
             }
 
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
         days_elapsed = (get_eastern_today() - start_date).days
-        current_week = min(max(1, (days_elapsed // 7) + 1), 24)
+        total_weeks = int(plan_info.get("total_weeks", 24))
+        current_week = min(max(1, (days_elapsed // 7) + 1), total_weeks)
+        end_date = start_date + timedelta(weeks=total_weeks) - timedelta(days=1)
+        test_weeks = [2, 12, 24]
+        next_test_week = next((w for w in test_weeks if w > current_week), None)
 
         # Get progress stats
         scheduled = db.query(ScheduledWorkout).filter(
@@ -1527,8 +1579,12 @@ class handler(BaseHTTPRequestHandler):
         return {
             "initialized": True,
             "start_date": start_date_str,
+            "end_date": end_date.isoformat(),
             "current_week": current_week,
-            "is_test_week": current_week in [1, 12, 24],
+            "total_weeks": total_weeks,
+            "is_test_week": current_week in test_weeks,
+            "next_test_week": next_test_week,
+            "days_until_end": (end_date - get_eastern_today()).days,
             "progress": {
                 "total_scheduled": total,
                 "completed": completed,
@@ -1561,21 +1617,35 @@ class handler(BaseHTTPRequestHandler):
             ScheduledWorkout.week_number == week_number
         ).order_by(ScheduledWorkout.scheduled_date).all()
 
+        week_start = start_date + timedelta(weeks=week_number - 1)
+        week_end = week_start + timedelta(days=6)
+
+        completed = len([w for w in workouts if w.status == "completed"])
+        total = len(workouts)
+        completion_rate = round((completed / total * 100) if total > 0 else 0, 1)
+
         return {
-            "week": week_number,
-            "is_test_week": week_number in [1, 12, 24],
+            "week_number": week_number,
+            "start_date": week_start.isoformat(),
+            "end_date": week_end.isoformat(),
+            "is_test_week": week_number in [2, 12, 24],
+            "completion_rate": completion_rate,
             "workouts": [
                 {
-                    "type": w.workout_type,
-                    "name": w.workout_name,
-                    "date": str(w.scheduled_date) if w.scheduled_date else None,
+                    "id": w.id,
+                    "workout_type": w.workout_type,
+                    "workout_name": w.workout_name,
+                    "scheduled_date": str(w.scheduled_date) if w.scheduled_date else None,
+                    "week_number": w.week_number,
                     "status": w.status,
-                    "duration_minutes": w.duration_minutes
+                    "duration_minutes": w.duration_minutes,
+                    "is_test_week": w.is_test_week,
+                    "garmin_workout_id": w.garmin_workout_id
                 }
                 for w in workouts
             ],
-            "completed": len([w for w in workouts if w.status == "completed"]),
-            "total": len(workouts)
+            "completed": completed,
+            "total": total
         }
 
     def _get_upcoming_workouts(self, db, days=7):

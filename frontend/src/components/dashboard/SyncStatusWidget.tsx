@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { syncApi } from '@/lib/api';
-import { RefreshCw, Check, AlertCircle } from 'lucide-react';
+import { RefreshCw, Check, AlertCircle, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function SyncStatusWidget() {
@@ -46,7 +46,10 @@ export function SyncStatusWidget() {
     return null;
   }
 
-  const isRecent = data.hours_since_sync !== null && data.hours_since_sync < 24;
+  const hoursSince = data.hours_since_sync;
+  const isRecent = hoursSince !== null && hoursSince < 26;
+  const neverSynced = !data.last_sync;
+
   const formatLastSync = () => {
     if (!data.last_sync) return 'Never synced';
 
@@ -54,14 +57,29 @@ export function SyncStatusWidget() {
     const now = new Date();
     const diffMs = now.getTime() - syncDate.getTime();
     const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMins = Math.floor(diffMs / (1000 * 60));
 
-    if (diffHours < 1) {
+    if (diffMins < 5) {
       return 'Just now';
+    }
+    if (diffMins < 60) {
+      return `${diffMins}m ago`;
     }
     if (diffHours < 24) {
       return `${diffHours}h ago`;
     }
-    return syncDate.toLocaleDateString();
+    // Show date for older syncs
+    return syncDate.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  };
+
+  const getSyncTypeLabel = () => {
+    if (!data.job_type) return '';
+    return data.job_type === 'automatic' ? '(auto)' : '(manual)';
   };
 
   return (
@@ -69,18 +87,29 @@ export function SyncStatusWidget() {
       <div
         className={cn(
           'flex items-center gap-2 text-sm px-3 py-1.5 rounded-full',
-          isRecent
-            ? 'bg-green-50 text-green-700'
-            : 'bg-amber-50 text-amber-700'
+          neverSynced
+            ? 'bg-amber-50 text-amber-700'
+            : isRecent
+              ? 'bg-green-50 text-green-700'
+              : 'bg-amber-50 text-amber-700'
         )}
       >
-        {isRecent ? (
+        {neverSynced ? (
+          <AlertCircle className="w-4 h-4" />
+        ) : isRecent ? (
           <Check className="w-4 h-4" />
         ) : (
-          <AlertCircle className="w-4 h-4" />
+          <Clock className="w-4 h-4" />
         )}
         <span>
-          {isRecent ? 'Data synced' : 'Sync needed'}: {formatLastSync()}
+          {neverSynced ? (
+            'Sync needed: Never synced'
+          ) : (
+            <>
+              {isRecent ? 'Data synced' : 'Sync needed'}: {formatLastSync()}{' '}
+              <span className="text-xs opacity-75">{getSyncTypeLabel()}</span>
+            </>
+          )}
         </span>
       </div>
 

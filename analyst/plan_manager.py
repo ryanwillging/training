@@ -17,6 +17,7 @@ from database.models import (
     CompletedActivity, WorkoutAnalysis, PlanAdjustment,
     TrainingPlan as TrainingPlanModel
 )
+from api.timezone import get_eastern_today
 
 # Lazy import for Garmin - not available in Vercel serverless
 GARMIN_AVAILABLE = False
@@ -129,7 +130,7 @@ class TrainingPlanManager:
             return existing.id
 
         # Create a default training plan
-        start_date = self.get_plan_start_date() or date.today()
+        start_date = self.get_plan_start_date() or get_eastern_today()
         end_date = start_date + timedelta(weeks=24)
 
         new_plan = TrainingPlanModel(
@@ -756,7 +757,7 @@ class TrainingPlanManager:
 
     def _get_upcoming_workouts(self, days: int) -> List[Dict[str, Any]]:
         """Get scheduled workouts for the next N days."""
-        today = date.today()
+        today = get_eastern_today()
         end_date = today + timedelta(days=days)
 
         scheduled = self.db.query(ScheduledWorkout).filter(
@@ -788,7 +789,7 @@ class TrainingPlanManager:
         return f"""24-Week Performance Plan
 Current Week: {current_week} of 24
 Start Date: {start_date.isoformat() if start_date else 'Not set'}
-Test Weeks: 1, 12, 24
+Test Weeks: 2, 12, 24
 Weekly Structure: Swim A (Mon), Lift A (Tue), VO2 (Wed), Swim B (Thu), Lift B (Fri)
 Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
 
@@ -799,7 +800,7 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
         evaluation_type: str = "nightly"
     ) -> None:
         """Store the evaluation in the daily_reviews table. Updates existing if present."""
-        today = date.today()
+        today = get_eastern_today()
 
         # Check for existing review today
         existing = self.db.query(DailyReview).filter(
@@ -1275,13 +1276,28 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
         progress = self.scheduler.get_plan_progress()
         current_week = self.get_current_week()
         start_date = self.get_plan_start_date()
+        total_weeks = int(progress.get("total_weeks", 24))
+
+        test_weeks = [2, 12, 24]
+        next_test_week = next((w for w in test_weeks if w > current_week), None)
+
+        if start_date:
+            end_date = start_date + timedelta(weeks=total_weeks) - timedelta(days=1)
+            days_until_end = (end_date - get_eastern_today()).days
+        else:
+            end_date = None
+            days_until_end = None
 
         return {
             "initialized": start_date is not None,
             "start_date": start_date.isoformat() if start_date else None,
+            "end_date": end_date.isoformat() if end_date else None,
             "current_week": current_week,
+            "total_weeks": total_weeks,
             "progress": progress,
-            "is_test_week": current_week in [1, 12, 24]
+            "is_test_week": current_week in test_weeks,
+            "next_test_week": next_test_week,
+            "days_until_end": days_until_end,
         }
 
     def cleanup_stale_reviews(self) -> Dict[str, int]:
@@ -1293,7 +1309,7 @@ Goals: Maintain 14% body fat, Increase VO2 max, Improve 400y freestyle time"""
         Returns:
             Count of deleted reviews by status
         """
-        cutoff_date = date.today() - timedelta(days=1)
+        cutoff_date = get_eastern_today() - timedelta(days=1)
 
         # Find stale reviews (not approved, older than cutoff)
         stale_reviews = self.db.query(DailyReview).filter(

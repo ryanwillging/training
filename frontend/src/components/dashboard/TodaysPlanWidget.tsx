@@ -38,9 +38,11 @@ export function TodaysPlanWidget() {
   }
 
   const workouts = data?.workouts || [];
+  const easternToday = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+  }).format(new Date());
   const todayWorkouts = workouts.filter((w) => {
-    const today = new Date().toISOString().split('T')[0];
-    return w.scheduled_date === today;
+    return w.scheduled_date === easternToday;
   });
 
   return (

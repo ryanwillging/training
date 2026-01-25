@@ -145,7 +145,29 @@ def root():
 def health_check():
     """Health check endpoint."""
     db_status = "connected" if _db_initialized else "not_configured"
-    return {"status": "healthy", "database": db_status}
+
+    # Match the serverless handler shape by including activity counts when possible.
+    activities = None
+    try:
+        from database.base import SessionLocal
+        from database.models import CompletedActivity
+
+        db = SessionLocal()
+        try:
+            activities = db.query(CompletedActivity).count()
+        except Exception:
+            # Roll back before closing so subsequent queries do not fail.
+            db.rollback()
+        finally:
+            db.close()
+    except Exception:
+        # If the DB isn't configured locally, we still return a healthy response.
+        activities = None
+
+    response = {"status": "healthy", "database": db_status}
+    if activities is not None:
+        response["activities"] = activities
+    return response
 
 
 @app.get("/upcoming")

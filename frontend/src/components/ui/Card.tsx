@@ -11,7 +11,7 @@ export function Card({ children, className, variant = 'default' }: CardProps) {
   return (
     <div
       className={cn(
-        'bg-surface rounded-xl overflow-hidden',
+        'md-card bg-surface rounded-xl overflow-hidden',
         variant === 'default' && 'shadow-md-1',
         variant === 'elevated' && 'shadow-md-2',
         variant === 'outlined' && 'border border-outline-variant',
