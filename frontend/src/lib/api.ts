@@ -226,6 +226,10 @@ export interface SyncStatus {
 
 export const syncApi = {
   getStatus: () => fetchApi<SyncStatus>('/cron/sync/status'),
+
+  triggerSync: () => fetchApi('/cron/sync/trigger', {
+    method: 'POST',
+  }),
 };
 
 // Reports endpoints (for explore dashboard)

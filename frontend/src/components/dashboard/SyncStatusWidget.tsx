@@ -1,16 +1,34 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { syncApi } from '@/lib/api';
 import { RefreshCw, Check, AlertCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export function SyncStatusWidget() {
+  const queryClient = useQueryClient();
+  const [showSuccess, setShowSuccess] = useState(false);
+
   const { data, isLoading } = useQuery({
     queryKey: ['sync-status'],
     queryFn: syncApi.getStatus,
     refetchInterval: 60000, // Refresh every minute
   });
+
+  const syncMutation = useMutation({
+    mutationFn: syncApi.triggerSync,
+    onSuccess: () => {
+      // Invalidate sync status to refresh the display
+      queryClient.invalidateQueries({ queryKey: ['sync-status'] });
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
+    },
+  });
+
+  const handleSync = () => {
+    syncMutation.mutate();
+  };
 
   if (isLoading) {
     return (
@@ -44,22 +62,50 @@ export function SyncStatusWidget() {
   };
 
   return (
-    <div
-      className={cn(
-        'flex items-center gap-2 text-sm px-3 py-1.5 rounded-full',
-        isRecent
-          ? 'bg-green-50 text-green-700'
-          : 'bg-amber-50 text-amber-700'
+    <div className="flex items-center gap-3">
+      <div
+        className={cn(
+          'flex items-center gap-2 text-sm px-3 py-1.5 rounded-full',
+          isRecent
+            ? 'bg-green-50 text-green-700'
+            : 'bg-amber-50 text-amber-700'
+        )}
+      >
+        {isRecent ? (
+          <Check className="w-4 h-4" />
+        ) : (
+          <AlertCircle className="w-4 h-4" />
+        )}
+        <span>
+          {isRecent ? 'Data synced' : 'Sync needed'}: {formatLastSync()}
+        </span>
+      </div>
+
+      <button
+        onClick={handleSync}
+        disabled={syncMutation.isPending}
+        className={cn(
+          'flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
+          'bg-gray-900 text-white hover:bg-gray-800',
+          'disabled:opacity-50 disabled:cursor-not-allowed'
+        )}
+        title="Manually trigger data sync from Garmin and Hevy"
+      >
+        <RefreshCw className={cn('w-4 h-4', syncMutation.isPending && 'animate-spin')} />
+        {syncMutation.isPending ? 'Syncing...' : 'Sync Now'}
+      </button>
+
+      {showSuccess && (
+        <div className="text-sm text-green-600 font-medium">
+          Sync completed!
+        </div>
       )}
-    >
-      {isRecent ? (
-        <Check className="w-4 h-4" />
-      ) : (
-        <AlertCircle className="w-4 h-4" />
+
+      {syncMutation.isError && (
+        <div className="text-sm text-red-600">
+          Sync failed. Please try again.
+        </div>
       )}
-      <span>
-        {isRecent ? 'Data synced' : 'Sync needed'}: {formatLastSync()}
-      </span>
     </div>
   );
 }

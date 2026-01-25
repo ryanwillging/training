@@ -207,6 +207,125 @@ async def cron_sync(
         db.close()
 
 
+@router.post("/sync/trigger")
+async def trigger_manual_sync():
+    """
+    Manually trigger a data sync.
+
+    This endpoint can be called from the frontend dashboard to trigger an immediate sync.
+    Creates a CronLog entry with job_type="manual_sync_web".
+    """
+    athlete_id = int(os.getenv("ATHLETE_ID", "1"))
+    days = 7  # Look back 7 days
+
+    db = SessionLocal()
+    results = {
+        "date": str(get_eastern_today()),
+        "athlete_id": athlete_id,
+        "days_synced": days,
+        "garmin_activities": None,
+        "garmin_wellness": None,
+        "hevy": None,
+        "errors": []
+    }
+
+    try:
+        start_time = time.time()
+
+        # Sync Garmin activities
+        try:
+            garmin = GarminActivityImporter(db, athlete_id)
+            imported, skipped, errors = garmin.import_recent_activities(days)
+            results["garmin_activities"] = {
+                "imported": imported,
+                "skipped": skipped,
+                "errors": errors
+            }
+            if errors:
+                results["errors"].extend([f"Garmin Activities: {e}" for e in errors])
+        except Exception as e:
+            results["garmin_activities"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
+            results["errors"].append(f"Garmin activities sync failed: {str(e)}")
+
+        # Sync Garmin wellness data
+        try:
+            wellness = GarminWellnessImporter(db, athlete_id)
+            imported, updated, errors = wellness.import_recent_wellness(days)
+            wellness.update_athlete_metrics()
+            results["garmin_wellness"] = {
+                "imported": imported,
+                "updated": updated,
+                "errors": errors
+            }
+            if errors:
+                results["errors"].extend([f"Garmin Wellness: {e}" for e in errors])
+        except Exception as e:
+            results["garmin_wellness"] = {"imported": 0, "updated": 0, "errors": [str(e)]}
+            results["errors"].append(f"Garmin wellness sync failed: {str(e)}")
+
+        # Sync Hevy workouts
+        try:
+            hevy = HevyActivityImporter(db, athlete_id)
+            imported, skipped, errors = hevy.import_recent_workouts(days)
+            results["hevy"] = {
+                "imported": imported,
+                "skipped": skipped,
+                "errors": errors
+            }
+            if errors:
+                results["errors"].extend([f"Hevy: {e}" for e in errors])
+        except Exception as e:
+            results["hevy"] = {"imported": 0, "skipped": 0, "errors": [str(e)]}
+            results["errors"].append(f"Hevy sync failed: {str(e)}")
+
+        # Calculate totals
+        total_imported = (
+            (results["garmin_activities"]["imported"] if results["garmin_activities"] else 0) +
+            (results["garmin_wellness"]["imported"] if results["garmin_wellness"] else 0) +
+            (results["hevy"]["imported"] if results["hevy"] else 0)
+        )
+
+        results["summary"] = {
+            "total_imported": total_imported,
+            "status": "completed" if not results["errors"] else "completed_with_errors"
+        }
+
+        # Persist to CronLog
+        try:
+            duration = time.time() - start_time
+
+            # Determine status
+            if not results["errors"]:
+                status = "success"
+            elif total_imported > 0:
+                status = "partial"
+            else:
+                status = "failed"
+
+            log_entry = CronLog(
+                run_date=get_eastern_now(),
+                job_type="manual_sync_web",  # Distinguish from script/GitHub Actions
+                status=status,
+                garmin_activities_imported=results["garmin_activities"]["imported"] if results["garmin_activities"] else 0,
+                garmin_wellness_imported=results["garmin_wellness"]["imported"] if results["garmin_wellness"] else 0,
+                hevy_imported=results["hevy"]["imported"] if results["hevy"] else 0,
+                errors_json=json.dumps(results["errors"]) if results["errors"] else None,
+                results_json=json.dumps(results),
+                duration_seconds=round(duration, 2)
+            )
+            db.add(log_entry)
+            db.commit()
+        except Exception as log_error:
+            # Don't let logging failures break sync
+            print(f"Failed to persist CronLog: {log_error}", file=sys.stderr)
+            db.rollback()
+
+        return results
+
+    finally:
+        db.close()
+
+
 @router.get("/sync/status")
 async def cron_status():
     """
@@ -217,7 +336,7 @@ async def cron_status():
     try:
         # Get most recent sync (automated, manual, or GitHub Actions)
         last_run = db.query(CronLog).filter(
-            CronLog.job_type.in_(["sync", "manual_sync", "github_actions"])
+            CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"])
         ).order_by(CronLog.run_date.desc()).first()
 
         base_status = {

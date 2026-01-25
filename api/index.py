@@ -225,7 +225,9 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     from database.models import CronLog
                     from api.timezone import get_eastern_now
-                    last_run = db.query(CronLog).order_by(CronLog.run_date.desc()).first()
+                    last_run = db.query(CronLog).filter(
+                        CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"])
+                    ).order_by(CronLog.run_date.desc()).first()
                     if last_run:
                         # Use timezone-naive datetime for comparison (database stores naive datetimes)
                         hours_since = (get_eastern_now().replace(tzinfo=None) - last_run.run_date).total_seconds() / 3600
@@ -549,6 +551,26 @@ class handler(BaseHTTPRequestHandler):
                 return self.send_json(400, {"error": "Database not configured"})
             try:
                 results = self._run_sync(db)
+                db.close()
+                return self.send_json(200, results)
+            except Exception as e:
+                db.close()
+                return self.send_json(500, {"error": str(e)})
+
+        # Manual sync trigger from dashboard
+        if path == "/api/cron/sync/trigger":
+            db = get_db_session()
+            if not db:
+                return self.send_json(400, {"error": "Database not configured"})
+            try:
+                import time as time_module
+                start_time = time_module.time()
+                results = self._run_sync(db)
+                duration = time_module.time() - start_time
+
+                # Log as manual web sync
+                self._log_cron_run(db, results, duration, job_type="manual_sync_web")
+
                 db.close()
                 return self.send_json(200, results)
             except Exception as e:
@@ -965,7 +987,7 @@ class handler(BaseHTTPRequestHandler):
         '''
         return wrap_page(content, title, None)
 
-    def _log_cron_run(self, db, results, duration):
+    def _log_cron_run(self, db, results, duration, job_type="sync"):
         """Log cron run to database for tracking."""
         try:
             from database.models import CronLog
@@ -982,7 +1004,7 @@ class handler(BaseHTTPRequestHandler):
 
             log = CronLog(
                 run_date=get_eastern_now(),
-                job_type="sync",
+                job_type=job_type,
                 status=status,
                 garmin_activities_imported=results.get("garmin_activities", {}).get("imported", 0) if isinstance(results.get("garmin_activities"), dict) else 0,
                 garmin_wellness_imported=results.get("garmin_wellness", {}).get("imported", 0) if isinstance(results.get("garmin_wellness"), dict) else 0,
