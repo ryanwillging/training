@@ -627,6 +627,147 @@ class handler(BaseHTTPRequestHandler):
                     return self.send_json(500, {"error": str(e)})
             return self.send_json(400, {"error": "Database not configured"})
 
+        # Performance test logging
+        if path == "/api/metrics/performance-test":
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+
+            try:
+                data = json.loads(body)
+            except Exception as e:
+                return self.send_json(400, {"error": f"Invalid JSON: {e}"})
+
+            # Validate required fields
+            required = ['athlete_id', 'test_date', 'metric_type', 'value', 'unit']
+            for field in required:
+                if field not in data:
+                    return self.send_json(400, {"error": f"Missing required field: {field}"})
+
+            db = get_db_session()
+            if db:
+                try:
+                    from database.models import ProgressMetric, Athlete
+                    from datetime import datetime
+
+                    # Verify athlete exists
+                    athlete = db.query(Athlete).filter(Athlete.id == data['athlete_id']).first()
+                    if not athlete:
+                        db.close()
+                        return self.send_json(404, {"error": f"Athlete {data['athlete_id']} not found"})
+
+                    # Parse test date
+                    try:
+                        test_date = datetime.strptime(data['test_date'], "%Y-%m-%d").date()
+                    except ValueError:
+                        db.close()
+                        return self.send_json(400, {"error": "Invalid test_date format. Use YYYY-MM-DD"})
+
+                    # Create metric
+                    metric = ProgressMetric(
+                        athlete_id=data['athlete_id'],
+                        metric_date=test_date,
+                        metric_type=data['metric_type'],
+                        value_numeric=float(data['value']),
+                        value_text=f"{data['value']} {data['unit']}",
+                        notes=data.get('notes')
+                    )
+                    db.add(metric)
+                    db.commit()
+                    db.refresh(metric)
+                    db.close()
+
+                    return self.send_json(200, {
+                        "id": metric.id,
+                        "metric_type": data['metric_type'],
+                        "message": f"Logged {data['metric_type']}: {data['value']} {data['unit']}"
+                    })
+
+                except Exception as e:
+                    db.rollback()
+                    db.close()
+                    return self.send_json(500, {"error": f"Failed to log test: {str(e)}"})
+            return self.send_json(500, {"error": "Database not configured"})
+
+        # Action single modification
+        if path.startswith("/api/plan/reviews/") and "/modifications/" in path and path.endswith("/action"):
+            # Parse review_id and mod_index from path
+            # Format: /api/plan/reviews/{review_id}/modifications/{mod_index}/action
+            parts = path.split("/")
+            try:
+                review_id = int(parts[4])  # reviews/X
+                mod_index = int(parts[6])  # modifications/Y
+            except (IndexError, ValueError):
+                return self.send_json(400, {"error": "Invalid path format"})
+
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+
+            try:
+                data = json.loads(body)
+            except Exception as e:
+                return self.send_json(400, {"error": f"Invalid JSON: {e}"})
+
+            action = data.get('action')
+            if action not in ('approve', 'reject'):
+                return self.send_json(400, {"error": "Action must be 'approve' or 'reject'"})
+
+            athlete_id = int(os.environ.get("ATHLETE_ID", "1"))
+            db = get_db_session()
+            if db:
+                try:
+                    from analyst.plan_manager import TrainingPlanManager
+                    manager = TrainingPlanManager(db, athlete_id)
+                    result = manager.action_single_modification(review_id, mod_index, action)
+                    db.close()
+                    return self.send_json(200, result)
+                except ValueError as e:
+                    db.close()
+                    return self.send_json(400, {"error": str(e)})
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(500, {"error": "Database not configured"})
+
+        # Action entire review
+        if path.startswith("/api/plan/reviews/") and path.endswith("/action"):
+            # Parse review_id from path
+            # Format: /api/plan/reviews/{review_id}/action
+            parts = path.split("/")
+            try:
+                review_id = int(parts[4])  # reviews/X
+            except (IndexError, ValueError):
+                return self.send_json(400, {"error": "Invalid path format"})
+
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length).decode('utf-8')
+
+            try:
+                data = json.loads(body)
+            except Exception as e:
+                return self.send_json(400, {"error": f"Invalid JSON: {e}"})
+
+            action = data.get('action')
+            if action not in ('approve', 'reject'):
+                return self.send_json(400, {"error": "Action must be 'approve' or 'reject'"})
+
+            notes = data.get('notes')
+            athlete_id = int(os.environ.get("ATHLETE_ID", "1"))
+            db = get_db_session()
+            if db:
+                try:
+                    from analyst.plan_manager import TrainingPlanManager
+                    manager = TrainingPlanManager(db, athlete_id)
+                    result = manager.action_review(review_id, action, notes)
+                    db.close()
+                    return self.send_json(200, result)
+                except ValueError as e:
+                    db.close()
+                    return self.send_json(400, {"error": str(e)})
+                except Exception as e:
+                    db.close()
+                    return self.send_json(500, {"error": str(e)})
+            return self.send_json(500, {"error": "Database not configured"})
+
         # Cron sync - actually runs the sync
         if path == "/api/cron/sync":
             # Check for Vercel Cron header OR Authorization Bearer token
