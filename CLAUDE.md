@@ -66,6 +66,22 @@ training/
     └── archive/          # Historical planning documents
 ```
 
+## Product Roadmap
+
+See `PRD.md` for the comprehensive product requirements document defining the evolution to a holistic health dashboard.
+
+### Development Phases (from PRD)
+1. **Phase A**: Enhanced dashboards (Main + Explore) with best-in-class visualizations
+2. **Phase D**: New integrations (Strava, nutrition photo logging, self-care)
+3. **Phase E**: Private health layer (genetics, blood work, supplements)
+4. **Phase C**: Comparison engine and analytics
+5. **Phase B**: iOS mobile app
+
+### Key Terminology
+- **Plan Evaluator**: The AI system that analyzes wellness/workout data and suggests modifications (stored in `DailyReview` model)
+- **Plan Adjustments**: Page for reviewing/approving AI recommendations (renaming from `/reviews`)
+- **Goals**: Page for goal management and progress (renaming from `/metrics`)
+
 ## Vercel Deployment
 - **Live URL**: https://training.ryanwillging.com
 - **Alt URL**: https://training-rho-eight.vercel.app
@@ -334,6 +350,28 @@ Data sources:
 - **Data pulled**: Strength workouts, exercises, sets (weight/reps/RPE)
 - **Client**: `client.py` handles API requests
 - **Importer**: `activity_importer.py` syncs to database
+
+### Upcoming Integrations (see PRD.md Phase D)
+- **Strava**: Pull historical data, ongoing sync for segments/routes/photos only (no kudos)
+- **Nutrition**: Photo-based logging with AI analysis (Claude/GPT-4 Vision) - no manual entry
+- **Apple Fitness**: Deferred to Future Expansion (no Apple Watch currently)
+
+### Private Health Data Layer (see PRD.md Phase E)
+Phase E introduces sensitive health data storage with strict security requirements:
+
+| Data Type | Storage | Encryption | Access |
+|-----------|---------|------------|--------|
+| Genetic data (23andMe, etc.) | Database | AES-256 | Private only |
+| Blood work results | Database | AES-256 | Private only |
+| Supplement logs | Database | Standard | Private only |
+| Body measurements | Database | Standard | Private only |
+
+**Security Requirements**:
+- Files must NOT be downloadable via GitHub or ryanwillging.com
+- All entry forms require authentication
+- AI can access summarized data (context injection) but not raw files
+- Public pages: Main Dashboard, Explore, Goals
+- Private pages: Plan Adjustments, all health data, all entry forms
 
 ## Garmin Workout Sync
 
@@ -652,7 +690,13 @@ open https://github.com/ryanwillging/training/actions/workflows/daily-sync.yml
 ### Training Plan Structure
 - **24 weeks**, 3 phases + taper
 - **Plan Start Date**: January 20, 2025 (historical anchor - week numbers calculated from this date)
+- **Primary Goal**: 400yd freestyle swim time (target TBD after baseline test)
+  - 100yd time is derived from 400yd splits, not a separate goal
 - **Test weeks**: 2, 12, 24 (400 TT)
+- **Post-Week 24**: Start new 24-week cycle (Option A from PRD)
+- **Quarterly Performance Tests** (see PRD.md):
+  - Vertical jump, broad jump (explosive power)
+  - Sit-and-reach, shoulder flexibility (mobility)
 - **Weekly cadence**:
   - Mon: Swim A (Threshold/CSS)
   - Tue: Lift A (Lower body)
@@ -1021,16 +1065,19 @@ hours_ago = (now - db_record.run_date).total_seconds() / 3600
 **Rationale**: Database stores naive datetimes, `get_eastern_now()` returns timezone-aware. Must convert to naive before comparison.
 
 ## Navigation Pages
-All HTML pages are registered in `api/navigation.py` and appear in the nav bar:
+All HTML pages are registered in `api/navigation.py` and appear in the nav bar.
 
-| Path | Name | Description |
-|------|------|-------------|
-| `/dashboard` | Dashboard | Main overview with sync status |
-| `/upcoming` | Upcoming | Scheduled workouts calendar |
-| `/reviews` | Reviews | AI plan modifications to approve/reject |
-| `/metrics` | Metrics | Body composition and performance tracking |
-| `/api/reports/daily` | Daily Report | Tufte-style daily training report |
-| `/api/reports/weekly` | Weekly Report | Rolling 7-day training summary |
+### Current vs Planned Navigation (see PRD.md)
+
+| Current Path | Current Name | Planned Path | Planned Name | Status |
+|--------------|--------------|--------------|--------------|--------|
+| `/dashboard` | Dashboard | `/dashboard` | Main Dashboard | Rename in Phase A |
+| - | - | `/explore` | Explore Dashboard | New in Phase A |
+| `/reviews` | Reviews | `/plan-adjustments` | Plan Adjustments | Rename in Phase A |
+| `/metrics` | Metrics | `/goals` | Goals | Rename in Phase A |
+| `/upcoming` | Upcoming | `/upcoming` | Upcoming | Keep |
+| `/api/reports/daily` | Daily Report | - | - | Remove in Phase A |
+| `/api/reports/weekly` | Weekly Report | - | - | Remove in Phase A |
 
 To add a new page, add it to the `PAGES` list in `api/navigation.py`.
 
