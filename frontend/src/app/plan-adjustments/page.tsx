@@ -24,7 +24,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 
-export default function PlanAdjustmentsPage() {
+export function PlanAdjustmentsPage() {
   const [userContext, setUserContext] = useState('');
   const [expandedReview, setExpandedReview] = useState<number | null>(null);
   const queryClient = useQueryClient();
@@ -405,6 +405,10 @@ export default function PlanAdjustmentsPage() {
       )}
     </div>
   );
+}
+
+export default function PlanAdjustmentsPageRoute() {
+  return <PlanAdjustmentsPage />;
 }
 
 function ModificationCard({

@@ -107,3 +107,14 @@ body {
 .ring-animate {
   animation: ring-progress 1s ease-out forwards;
 }
+
+/* Navigation helpers for legacy e2e selectors */
+.md-nav-mobile {
+  display: none;
+  background: var(--md-surface);
+  border-top: 1px solid var(--md-outline-variant);
+}
+
+.md-nav-mobile.open {
+  display: block;
+}

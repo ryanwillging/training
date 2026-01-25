@@ -26,6 +26,12 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap"
           rel="stylesheet"
         />
+        <style>{`
+          :root {
+            --md-primary: #1976d2;
+            --md-surface: #ffffff;
+          }
+        `}</style>
       </head>
       <body className="min-h-screen bg-background">
         <Providers>

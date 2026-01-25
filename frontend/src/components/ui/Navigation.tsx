@@ -69,12 +69,9 @@ export function Navigation() {
       {/* Mobile Navigation */}
       <div
         id="mobile-menu"
-        className={cn(
-          'md-nav-mobile sm:hidden border-t border-outline-variant bg-surface',
-          mobileMenuOpen ? 'open block' : 'hidden'
-        )}
+        className={cn('md-nav-mobile', mobileMenuOpen && 'open')}
       >
-        <div className="px-4 py-2 space-y-1">
+        <div className="px-4 py-2 space-y-1 sm:hidden">
           {PAGES.map((page) => (
             <Link
               key={page.path}

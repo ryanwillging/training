@@ -14,7 +14,7 @@ import {
 } from '@/components/ui';
 import { LineChart } from '@/components/charts';
 import { metricsApi, planApi } from '@/lib/api';
-import { Target, TrendingUp, Calendar, Plus, Check } from 'lucide-react';
+import { TrendingUp, Plus } from 'lucide-react';
 
 // Performance test types
 const TEST_TYPES = [
@@ -258,7 +258,8 @@ export function GoalsPage() {
       </div>
 
       {/* Log Test Form */}
-      <Card id="performance-test-form" className="border-2 border-primary">
+      <div id="performance-test-form">
+      <Card className="border-2 border-primary">
         <CardHeader>
           <CardTitle>Log Performance Test</CardTitle>
         </CardHeader>
@@ -321,6 +322,7 @@ export function GoalsPage() {
           </form>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

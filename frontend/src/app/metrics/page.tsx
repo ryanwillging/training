@@ -1,6 +1,4 @@
-'use client';
-
-import { GoalsPage } from './view';
+import { GoalsPage } from '../goals/GoalsPage';
 
 export default function MetricsPage() {
   return <GoalsPage />;

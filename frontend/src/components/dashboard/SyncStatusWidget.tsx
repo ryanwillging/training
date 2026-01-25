@@ -48,6 +48,8 @@ export function SyncStatusWidget() {
 
   const hoursSince = data.hours_since_sync;
   const isRecent = hoursSince !== null && hoursSince < 26;
+  const isStale = hoursSince !== null && hoursSince >= 26 && hoursSince < 50;
+  const isVeryStale = hoursSince !== null && hoursSince >= 50;
   const neverSynced = !data.last_sync;
 
   const formatLastSync = () => {
@@ -91,7 +93,9 @@ export function SyncStatusWidget() {
             ? 'bg-amber-50 text-amber-700'
             : isRecent
               ? 'bg-green-50 text-green-700'
-              : 'bg-amber-50 text-amber-700'
+              : isVeryStale
+                ? 'bg-red-50 text-red-700'
+                : 'bg-amber-50 text-amber-700'
         )}
       >
         {neverSynced ? (
@@ -103,13 +107,19 @@ export function SyncStatusWidget() {
         )}
         <span>
           {neverSynced ? (
-            'Sync needed: Never synced'
+            'Never synced'
           ) : (
             <>
-              {isRecent ? 'Data synced' : 'Sync needed'}: {formatLastSync()}{' '}
+              Last sync: {formatLastSync()}{' '}
               <span className="text-xs opacity-75">{getSyncTypeLabel()}</span>
             </>
           )}
+        </span>
+        <span className="text-xs font-medium">
+          {isRecent && '✓ success'}
+          {isStale && '⚠ warning'}
+          {isVeryStale && '✗ error'}
+          {hoursSince === null && '⚠ warning'}
         </span>
       </div>
 
