@@ -513,6 +513,44 @@ class TestAPIIntegration:
         expected_endpoints = ["plan", "wellness", "metrics"]
         has_expected = any(endpoint in api_calls_str for endpoint in expected_endpoints)
 
+    def test_upcoming_api_data_shape(self, page: Page):
+        """Test that /api/plan/upcoming returns correct data shape to match frontend expectations"""
+        import json
+
+        # Fetch API data directly
+        response = page.request.get(f"{BASE_URL.replace('https://training.ryanwillging.com', 'https://training-ryanwillgings-projects.vercel.app')}/api/plan/upcoming?days=7")
+        assert response.ok, f"API returned {response.status}"
+
+        data = response.json()
+
+        # Verify top-level structure
+        assert "days_ahead" in data, "Missing days_ahead field"
+        assert "workouts" in data, "Missing workouts field"
+        assert isinstance(data["workouts"], list), "workouts should be a list"
+
+        # If we have workouts, verify the shape matches ScheduledWorkout interface
+        if len(data["workouts"]) > 0:
+            workout = data["workouts"][0]
+
+            # Required fields that frontend expects
+            required_fields = [
+                "id",
+                "workout_type",
+                "workout_name",
+                "scheduled_date",
+                "week_number",
+                "status",
+                "is_test_week"
+            ]
+
+            for field in required_fields:
+                assert field in workout, f"Missing required field: {field}. Workout data: {json.dumps(workout, indent=2)}"
+
+            # Ensure old field names are NOT present
+            old_fields = ["date", "type", "name", "week"]
+            for field in old_fields:
+                assert field not in workout, f"Found deprecated field '{field}' - should be using new field names"
+
     def test_goals_page_api_calls(self, page: Page):
         """Test goals page makes correct API calls"""
         api_calls = []
