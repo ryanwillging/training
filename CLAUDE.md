@@ -6,8 +6,10 @@
 |------|-------|
 | **Live URL** | https://training.ryanwillging.com |
 | **Python** | 3.9+ |
-| **Deploy** | `vercel deploy --prod` |
-| **Local server** | `source venv/bin/activate && uvicorn api.app:app --reload` |
+| **Deploy Frontend** | `cd frontend && vercel --prod` |
+| **Deploy API** | (Auto-deploys via GitHub Actions) |
+| **Local Frontend** | `cd frontend && npm run dev` (port 3000) |
+| **Local API** | `source venv/bin/activate && uvicorn api.app:app --reload` (port 8000) |
 | **Sync data** | `python scripts/run_sync.py` (local) or GitHub Actions UI |
 | **Check sync** | `curl https://training.ryanwillging.com/api/cron/sync/status` |
 | **Run tests** | `pytest tests/e2e/ --base-url https://training.ryanwillging.com` |
@@ -24,6 +26,10 @@
 ## Project Structure (Key Directories)
 
 ```
+frontend/      Next.js 14 app (deployed to frontend.vercel.app, aliased to training.ryanwillging.com)
+  src/app/     App Router pages (dashboard, explore, goals, plan-adjustments, upcoming)
+  src/components/ React components (UI, charts, dashboard widgets)
+  src/lib/     API client, utilities
 api/           FastAPI app (app.py=local, index.py=Vercel serverless)
 analyst/       AI evaluation, plan parsing, workout scheduling
 database/      SQLAlchemy models (models.py)
@@ -32,6 +38,20 @@ plans/         Training plan markdown (base_training_plan.md)
 scripts/       Utility scripts (run_sync.py, setup_db.py)
 tests/e2e/     Playwright tests
 ```
+
+## Architecture
+
+**Frontend (Next.js)**:
+- Deployed as separate Vercel project: `ryanwillgings-projects/frontend`
+- Aliased to: `training.ryanwillging.com`
+- API calls proxied to: `training-ryanwillgings-projects.vercel.app/api/*`
+- Environment variable: `API_URL=https://training-ryanwillgings-projects.vercel.app`
+
+**Backend (Python/FastAPI)**:
+- Deployed as Vercel project: `ryanwillgings-projects/training`
+- Direct URL: `training-ryanwillgings-projects.vercel.app`
+- Handles all `/api/*` endpoints
+- GitHub Actions runs daily sync at 5:00 UTC
 
 ## Critical Patterns
 
