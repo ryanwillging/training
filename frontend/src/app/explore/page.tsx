@@ -96,7 +96,9 @@ export default function ExplorePage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-medium text-gray-900">Explore</h1>
+          <h1 className="md-headline-large text-2xl sm:text-3xl font-medium text-gray-900">
+            Explore
+          </h1>
           <p className="text-gray-500 mt-1">
             Long-term trends and wellness insights
           </p>

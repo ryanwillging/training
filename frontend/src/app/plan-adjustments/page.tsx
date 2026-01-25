@@ -110,13 +110,45 @@ export default function PlanAdjustmentsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl sm:text-3xl font-medium text-gray-900">
+        <h1 className="md-headline-large text-2xl sm:text-3xl font-medium text-gray-900">
           Plan Adjustments
         </h1>
         <p className="text-gray-500 mt-1">
           AI-powered training plan evaluations and modifications
         </p>
       </div>
+
+      {/* Latest Review Summary */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <MessageSquare className="w-5 h-5 text-primary" />
+            Latest Review
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!hasReview ? (
+            <div className="text-sm text-gray-600">
+              No evaluations yet. Run a new evaluation to see insights and recommendations.
+            </div>
+          ) : (
+            <div className="space-y-3 text-sm text-gray-700">
+              <div className="flex items-center gap-2 text-gray-500">
+                <Clock className="w-4 h-4" />
+                <span>Evaluation date: {new Date(review.date).toLocaleDateString()}</span>
+              </div>
+              <div>
+                <p className="font-medium text-gray-800">Insights</p>
+                <p>{review.insights || 'No insights available.'}</p>
+              </div>
+              <div>
+                <p className="font-medium text-gray-800">Recommendations</p>
+                <p>{review.recommendations || 'No recommendations available.'}</p>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Run Evaluation Card */}
       <Card>

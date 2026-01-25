@@ -37,14 +37,16 @@ export default function UpcomingPage() {
   }, {} as Record<string, ScheduledWorkout[]>);
 
   const sortedDates = Object.keys(workoutsByDate).sort();
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+  }).format(new Date());
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-medium text-gray-900">
+          <h1 className="md-headline-large text-2xl sm:text-3xl font-medium text-gray-900">
             Upcoming Workouts
           </h1>
           <p className="text-gray-500 mt-1">
@@ -81,6 +83,9 @@ export default function UpcomingPage() {
             <p className="text-sm text-gray-500">
               Initialize your training plan to see scheduled workouts.
             </p>
+            <ul className="sr-only">
+              <li>No scheduled workouts</li>
+            </ul>
           </CardContent>
         </Card>
       ) : (

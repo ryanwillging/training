@@ -27,7 +27,6 @@ const TEST_TYPES = [
 ];
 
 export default function GoalsPage() {
-  const [showTestForm, setShowTestForm] = useState(false);
   const [testType, setTestType] = useState(TEST_TYPES[0].value);
   const [testValue, setTestValue] = useState('');
   const [testNotes, setTestNotes] = useState('');
@@ -143,7 +142,9 @@ export default function GoalsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-medium text-gray-900">Goals</h1>
+          <h1 className="md-headline-large text-2xl sm:text-3xl font-medium text-gray-900">
+            Goals
+          </h1>
           <p className="text-gray-500 mt-1">
             Week {currentWeek} of 24
             {isTestWeek && (
@@ -153,7 +154,13 @@ export default function GoalsPage() {
             )}
           </p>
         </div>
-        <Button onClick={() => setShowTestForm(true)}>
+        <Button
+          type="button"
+          onClick={() => {
+            const target = document.getElementById('performance-test-form');
+            target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }}
+        >
           <Plus className="w-4 h-4" />
           Log Test Result
         </Button>
@@ -177,69 +184,70 @@ export default function GoalsPage() {
         </Card>
       )}
 
-      {/* Log Test Form Modal */}
-      {showTestForm && (
-        <Card className="border-2 border-primary">
-          <CardHeader>
-            <CardTitle>Log Performance Test</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Test Type
-                </label>
-                <select
-                  value={testType}
-                  onChange={(e) => setTestType(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  {TEST_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Value ({TEST_TYPES.find((t) => t.value === testType)?.unit})
-                </label>
-                <input
-                  type="number"
-                  value={testValue}
-                  onChange={(e) => setTestValue(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  placeholder="Enter value"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Notes (optional)
-                </label>
-                <textarea
-                  value={testNotes}
-                  onChange={(e) => setTestNotes(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  rows={2}
-                  placeholder="Any additional notes..."
-                />
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={handleSubmitTest}
-                  disabled={!testValue || logTestMutation.isPending}
-                >
-                  {logTestMutation.isPending ? 'Saving...' : 'Save Result'}
-                </Button>
-                <Button variant="outlined" onClick={() => setShowTestForm(false)}>
-                  Cancel
-                </Button>
-              </div>
+      {/* Log Test Form */}
+      <Card id="performance-test-form" className="border-2 border-primary">
+        <CardHeader>
+          <CardTitle>Log Performance Test</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              handleSubmitTest();
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Test Type
+              </label>
+              <select
+                value={testType}
+                onChange={(e) => setTestType(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                {TEST_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Value ({TEST_TYPES.find((t) => t.value === testType)?.unit})
+              </label>
+              <input
+                type="number"
+                value={testValue}
+                onChange={(e) => setTestValue(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="Enter value"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Notes (optional)
+              </label>
+              <textarea
+                value={testNotes}
+                onChange={(e) => setTestNotes(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                rows={2}
+                placeholder="Any additional notes..."
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="submit"
+                disabled={!testValue || logTestMutation.isPending}
+              >
+                {logTestMutation.isPending ? 'Saving...' : 'Save Result'}
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
 
       {/* Active Goals */}
       <div>

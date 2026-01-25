@@ -272,9 +272,16 @@ async def cron_status():
     db = SessionLocal()
     try:
         # Get most recent SUCCESSFUL sync (not serverless failures)
+        # Must have actually imported something (serverless attempts import 0)
+        from sqlalchemy import or_
         last_run = db.query(CronLog).filter(
             CronLog.job_type.in_(["sync", "manual_sync", "github_actions", "manual_sync_web"]),
-            CronLog.status.in_(["success", "partial"])  # Exclude failed serverless attempts
+            CronLog.status.in_(["success", "partial"]),
+            or_(
+                CronLog.garmin_activities_imported > 0,
+                CronLog.garmin_wellness_imported > 0,
+                CronLog.hevy_imported > 0
+            )
         ).order_by(CronLog.run_date.desc()).first()
 
         if not last_run:
